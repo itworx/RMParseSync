@@ -7,31 +7,24 @@
 Pod::Spec.new do |s|
   s.name             = "RMParseSync"
   s.version          = "0.1.0"
-  s.summary          = "A short description of RMParseSync."
+  s.summary          = "Offline support for Parse"
   s.description      = <<-DESC
-                       An optional longer description of RMParseSync
-
-                       * Markdown format.
-                       * Don't worry about the indent, we strip it!
+                       Provides support for Full Offline Cashing for Parse sdk for iOS
                        DESC
-  s.homepage         = "http://EXAMPLE/NAME"
-  s.screenshots      = "www.example.com/screenshots_1", "www.example.com/screenshots_2"
+  s.homepage         = "https://github.com/itworx/RMParseSync.git"
   s.license          = 'MIT'
-  s.author           = { "Ahmad AlMoraly" => "ahmedalmoraly@gmail.com" }
-  s.source           = { :git => "http://EXAMPLE/NAME.git", :tag => s.version.to_s }
-  s.social_media_url = 'https://twitter.com/EXAMPLE'
+  s.author           = { "Ramy Medhat" => "ramymedhat@gmail.com" }
+  s.source           = { :git => "https://github.com/itworx/RMParseSync.git", :tag => s.version.to_s }
 
-  # s.platform     = :ios, '5.0'
-  # s.ios.deployment_target = '5.0'
-  # s.osx.deployment_target = '10.7'
+  s.platform     = :ios, '7.0'
   s.requires_arc = true
 
   s.source_files = 'Classes'
-  s.resources = 'Assets/*.png'
+  
+  s.xcconfig = { "FRAMEWORK_SEARCH_PATHS" => '"$(PODS_ROOT)/Parse"' }
 
-  s.ios.exclude_files = 'Classes/osx'
-  s.osx.exclude_files = 'Classes/ios'
   # s.public_header_files = 'Classes/**/*.h'
-  # s.frameworks = 'SomeFramework', 'AnotherFramework'
-  # s.dependency 'JSONKit', '~> 1.4'
+  s.frameworks = 'Foundation', 'CoreData'
+  s.dependency 'Bolts', '~> 1.1.0'
+  s.dependency 'Parse', '~> 1.2.19'
 end
