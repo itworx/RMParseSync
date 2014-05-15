@@ -19,7 +19,7 @@ Pod::Spec.new do |s|
   s.platform     = :ios, '7.0'
   s.requires_arc = true
 
-  s.source_files = 'Classes'
+  s.source_files = 'Classes', 'Parse.Framework/Headers'
   
   s.xcconfig = { "FRAMEWORK_SEARCH_PATHS" => '"$(PODS_ROOT)/Parse"' }
 
