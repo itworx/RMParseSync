@@ -7,6 +7,7 @@
 //
 
 #import "RMParseSync.h"
+#import <Parse/Parse.h>
 
 @interface PFObject (Bolts)
 
