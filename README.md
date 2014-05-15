@@ -18,7 +18,7 @@ it simply add the following line to your Podfile:
 
 ## Author
 
-Ahmad AlMoraly, ahmedalmoraly@gmail.com
+Ramy Medhat, ramymedhat@gmail.com
 
 ## License
 
