@@ -7,40 +7,39 @@
 //
 
 #import "RMParseSync.h"
-#import <Parse/Parse.h>
 
 @interface PFObject (Bolts)
 
-+ (BFTask *)saveAllAsync:(NSArray *)objects;
++ (BFTask *)tk_saveAllAsync:(NSArray *)objects;
 
-+ (BFTask *)deleteAllAsync:(NSArray *)objects;
++ (BFTask *)tk_deleteAllAsync:(NSArray *)objects;
 
-+ (BFTask *)fetchAllAsync:(NSArray *)objects;
++ (BFTask *)tk_fetchAllAsync:(NSArray *)objects;
 
 
-- (BFTask *)refreshAsync;
+- (BFTask *)tk_refreshAsync;
 
-- (BFTask *)fetchAsync;
+- (BFTask *)tk_fetchAsync;
 
-- (BFTask *)fetchIfNeededAsync;
+- (BFTask *)tk_fetchIfNeededAsync;
 
-- (BFTask *)deleteAsync;
+- (BFTask *)tk_deleteAsync;
 
-- (BFTask *)saveAsync;
+- (BFTask *)tk_saveAsync;
 
 @end
 
 
 @interface PFQuery (Bolts)
 
-- (BFTask *)findObjectsAsync;
+- (BFTask *)tk_findObjectsAsync;
 
 @end
 
 @interface PFFile (Bolts)
 
-- (BFTask *)getDataAsync;
+- (BFTask *)tk_getDataAsync;
 
-- (BFTask *)getDataAsyncWithProgressBlock:(PFProgressBlock)progressBlock;
+- (BFTask *)tk_getDataAsyncWithProgressBlock:(PFProgressBlock)progressBlock;
 
 @end

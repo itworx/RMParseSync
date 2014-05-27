@@ -60,7 +60,7 @@
         NSMutableArray *tasks = @[].mutableCopy;
         
         for (NSString *key in [parseObject allKeys]) {
-            if ([key isEqualToString:kTKDBIsDeletedField] || [key isEqualToString:kTKDBUniqueIDField]) {
+            if ([key isEqualToString:kTKDBIsDeletedField]) {
                 continue;
             }
             
@@ -70,7 +70,7 @@
 
                 PFObject *relatedObject = [parseObject valueForKey:key];
                 
-                [[relatedObject refreshAsync] continueWithBlock:^id(BFTask *task) {
+                [[relatedObject tk_refreshAsync] continueWithBlock:^id(BFTask *task) {
                     if (task.isCancelled) {
                         [subTask cancel];
                     }
@@ -97,7 +97,7 @@
                 // get related objects using [relation query]
                 PFQuery *query = [relation query];
                 
-                [[query findObjectsAsync] continueWithBlock:^id(BFTask *task) {
+                [[query tk_findObjectsAsync] continueWithBlock:^id(BFTask *task) {
                     if (task.isCancelled) {
                         [subTask cancel];
                     }
@@ -294,7 +294,7 @@
         PFQuery *query = [PFQuery queryWithClassName:entityName];
         [query whereKey:@"updatedAt" greaterThan:[TKDB defaultDB].lastSyncDate];
         
-        return [[query findObjectsAsync] continueWithSuccessBlock:^id(BFTask *task) {
+        return [[query tk_findObjectsAsync] continueWithSuccessBlock:^id(BFTask *task) {
             
             NSMutableArray *arrayServerObjects = [NSMutableArray array];
             NSArray *parseObjects = task.result;
@@ -401,7 +401,7 @@
 
             PFObject *parseObj = [self existingParseObjectBasicInfoForServerObject:serverObject];
             
-            [[parseObj fetchIfNeededAsync] continueWithSuccessBlock:^id(BFTask *task) {
+            [[parseObj tk_fetchIfNeededAsync] continueWithSuccessBlock:^id(BFTask *task) {
                 PFObject *parseObject = task.result;
                 
                 // enumerate and get the related object(s)
@@ -425,7 +425,7 @@
                     else if ([serverObject.relatedObjects[key] isKindOfClass:[NSArray class]]) {
                         PFRelation *relation = [parseObject relationForKey:key];
                         // get all objects
-                        [[[relation query] findObjectsAsync] continueWithSuccessBlock:^id(BFTask *task) {
+                        [[[relation query] tk_findObjectsAsync] continueWithSuccessBlock:^id(BFTask *task) {
                             NSArray *arrChildObjects = task.result;
                             
                             for (PFObject *childObject in arrChildObjects) {
@@ -475,7 +475,7 @@
             else {
                 return [[BFTask taskWithResult:parseObjects] continueWithBlock:^id(BFTask *task) {
                     // save those objects
-                    return [PFObject saveAllAsync:task.result];
+                    return [PFObject tk_saveAllAsync:task.result];
                 }];
             }
         }];

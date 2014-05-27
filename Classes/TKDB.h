@@ -57,7 +57,13 @@ while(condition) { \
  */
 @property (nonatomic, strong, readonly) NSManagedObjectContext *syncContext;
 
+/**
+ *  Context used for syncing. Is a child of the root context.
+ */
+@property (nonatomic, strong) NSArray *entities;
+
 + (TKDB*) defaultDB;
+
 
 - (void) setRootContext:(NSManagedObjectContext*)rootContext;
 
@@ -67,5 +73,7 @@ while(condition) { \
 - (void) syncWithSuccessBlock:(TKSyncSuccessBlock)successBlock andFailureBlock:(TKSyncFailureBlock)failureBlock;
 
 - (BFTask *)sync;
+
+- (BFTask *)checkServerForExistingObjects;
 
 @end

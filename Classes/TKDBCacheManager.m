@@ -93,7 +93,6 @@
             __autoreleasing NSError *error;
             BOOL ret = [[NSFileManager defaultManager] createDirectoryAtPath:applicationStorageDirectory withIntermediateDirectories:YES attributes:nil error:&error];
             if(!ret) {
-                NSLog(@"ERROR app support: %@", error);
                 exit(0);
             }
         }

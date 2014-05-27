@@ -21,13 +21,16 @@
     [[TKDB defaultDB].syncContext performBlockAndWait:^{
         managedObject =[NSEntityDescription insertNewObjectForEntityForName:object.entityName inManagedObjectContext:weakSyncContext];
     }];
-    
+
     [managedObject setValue:object.uniqueObjectID forKeyPath:kTKDBUniqueIDField];
     [managedObject setValue:object.serverObjectID forKey:kTKDBServerIDField];
     [managedObject setValue:object.creationDate forKey:kTKDBCreatedDateField];
     [managedObject setValue:object.lastModificationDate forKey:kTKDBUpdatedDateField];
     
     for (NSString *key in [object.attributeValues allKeys]) {
+        if ([key isEqualToString:@"ACL"]) {
+            continue;
+        }
         [managedObject setValue:object.attributeValues[key] forKey:key];
     }
     
@@ -55,8 +58,8 @@
                 }
                 NSManagedObject *relatedManagedObject = [[TKDB defaultDB].syncContext objectWithURI:[NSURL URLWithString:[[TKDBCacheManager sharedManager] localObjectURLForUniqueObjectID:relatedServerObject.uniqueObjectID]]];
                 [relatedObjects addObject:relatedManagedObject];
+                [managedObject setValue:relatedObjects forKey:key];
             }
-            [managedObject setValue:relatedObjects forKey:key];
         }
         else if ([serverObject.relatedObjects[key] isEqual:[NSNull null]]) {
             [managedObject setValue:nil forKey:key];
@@ -101,6 +104,28 @@
     if ([serverObjects count] == 0) {
         return;
     }
+    
+    // filter deleted objects
+    serverObjects = [serverObjects filteredArrayUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(TKServerObject *serverObject, NSDictionary *bindings) {
+        if (serverObject.isDeleted) {
+            // get it from local and delete
+            NSFetchRequest *request = [[NSFetchRequest alloc] initWithEntityName:serverObject.entityName];
+            request.predicate = [NSPredicate predicateWithFormat:@"%K == %@", kTKDBUniqueIDField, serverObject.uniqueObjectID];
+            NSError *error;
+            NSArray *objects = [[TKDB defaultDB].syncContext executeFetchRequest:request error:&error];
+            if (objects.count == 1) {
+                NSManagedObject *obj = [objects lastObject];
+                [[TKDB defaultDB].syncContext deleteObject:obj];
+            }
+            else {
+                // it doesn't exist then ignore
+            }
+            return NO;
+        }
+        else {
+            return YES;
+        }
+    }]];
     
     // First, insert objects without wiring for relationships.
     for (TKServerObject *serverObject in serverObjects) {
@@ -148,6 +173,9 @@
         }
         else {
             for (NSString *key in serverObject.attributeValues) {
+                if ([key isEqualToString:@"ACL"]) {
+                    continue;
+                }
                 [object setValue:serverObject.attributeValues[key] forKey:key];
             }
             

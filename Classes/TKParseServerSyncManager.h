@@ -8,8 +8,6 @@
 
 #import "TKServerSyncManager.h"
 
-#import <Parse/Parse.h>
-
 @interface TKParseServerSyncManager : TKServerSyncManager
 
 @end

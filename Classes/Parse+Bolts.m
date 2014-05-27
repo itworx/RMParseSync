@@ -11,7 +11,7 @@
 
 @implementation PFObject (Bolts)
 
-+ (BFTask *)saveAllAsync:(NSArray *)objects {
++ (BFTask *)tk_saveAllAsync:(NSArray *)objects {
     BFTaskCompletionSource *saveAll = [BFTaskCompletionSource taskCompletionSource];
     
     [self saveAllInBackground:objects block:^(BOOL succeeded, NSError *error) {
@@ -26,7 +26,7 @@
     return saveAll.task;
 }
 
-+ (BFTask *)deleteAllAsync:(NSArray *)objects {
++ (BFTask *)tk_deleteAllAsync:(NSArray *)objects {
     BFTaskCompletionSource *deleteAll = [BFTaskCompletionSource taskCompletionSource];
     
     [self deleteAllInBackground:objects block:^(BOOL succeeded, NSError *error) {
@@ -41,7 +41,7 @@
     return deleteAll.task;
 }
 
-+ (BFTask *)fetchAllAsync:(NSArray *)objects {
++ (BFTask *)tk_fetchAllAsync:(NSArray *)objects {
     BFTaskCompletionSource *fetchAll = [BFTaskCompletionSource taskCompletionSource];
     [self fetchAllInBackground:objects block:^(NSArray *fetchedObjects, NSError *error) {
         if (error) {
@@ -56,7 +56,7 @@
 }
 
 
-- (BFTask *)refreshAsync {
+- (BFTask *)tk_refreshAsync {
     BFTaskCompletionSource *refresh = [BFTaskCompletionSource taskCompletionSource];
     
     [self refreshInBackgroundWithBlock:^(PFObject *object, NSError *error) {
@@ -71,7 +71,7 @@
     return refresh.task;
 }
 
-- (BFTask *)fetchAsync {
+- (BFTask *)tk_fetchAsync {
     BFTaskCompletionSource *fetch = [BFTaskCompletionSource taskCompletionSource];
     
     [self fetchInBackgroundWithBlock:^(PFObject *object, NSError *error) {
@@ -86,7 +86,7 @@
     return fetch.task;
 }
 
-- (BFTask *)fetchIfNeededAsync {
+- (BFTask *)tk_fetchIfNeededAsync {
     BFTaskCompletionSource *fetch = [BFTaskCompletionSource taskCompletionSource];
     
     [self fetchIfNeededInBackgroundWithBlock:^(PFObject *object, NSError *error) {
@@ -101,7 +101,7 @@
     return fetch.task;
 }
 
-- (BFTask *)deleteAsync {
+- (BFTask *)tk_deleteAsync {
     BFTaskCompletionSource *delete = [BFTaskCompletionSource taskCompletionSource];
     
     [self deleteInBackgroundWithBlock:^(BOOL succeeded, NSError *error) {
@@ -116,7 +116,7 @@
     return delete.task;
 }
 
-- (BFTask *)saveAsync {
+- (BFTask *)tk_saveAsync {
     BFTaskCompletionSource *save = [BFTaskCompletionSource taskCompletionSource];
     
     [self saveInBackgroundWithBlock:^(BOOL succeeded, NSError *error) {
@@ -135,7 +135,7 @@
 
 @implementation PFQuery (Bolts)
 
-- (BFTask *)findObjectsAsync {
+- (BFTask *)tk_findObjectsAsync {
     BFTaskCompletionSource *find = [BFTaskCompletionSource taskCompletionSource];
     
     [self findObjectsInBackgroundWithBlock:^(NSArray *objects, NSError *error) {
@@ -154,7 +154,7 @@
 
 @implementation PFFile (Bolts)
 
-- (BFTask *)getDataAsync {
+- (BFTask *)tk_getDataAsync {
     BFTaskCompletionSource *getData = [BFTaskCompletionSource taskCompletionSource];
     
     [self getDataInBackgroundWithBlock:^(NSData *data, NSError *error) {
@@ -169,7 +169,7 @@
     return getData.task;
 }
 
-- (BFTask *)getDataAsyncWithProgressBlock:(PFProgressBlock)progressBlock {
+- (BFTask *)tk_getDataAsyncWithProgressBlock:(PFProgressBlock)progressBlock {
     BFTaskCompletionSource *getData = [BFTaskCompletionSource taskCompletionSource];
     
     [self getDataInBackgroundWithBlock:^(NSData *data, NSError *error) {
