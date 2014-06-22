@@ -14,6 +14,7 @@
 
 @interface TKServerSyncManager : NSObject
 
+- (BFTask *)countOfObjectsForEntity:(NSString *)entityName;
 
 /**
  *  Uploads an array of inserted TKServerObjects to the server. Is responsible for converting
@@ -23,7 +24,6 @@
  *  @param successBlock  the block to call on successful upload. On success, should return array of updated server objects.
  *  @param failureBlock  the block to call on failed upload.
  */
-- (void) uploadInsertedObjects:(NSArray*)serverObjects withSuccessBlock:(TKSyncSuccessBlock)successBlock andFailureBlock:(TKSyncFailureBlock)failureBlock;
 - (BFTask *)uploadInsertedObjectsAsync:(NSArray *)serverObjects;
 /**
  *  Downloads the updated objects on the server. Includes newly inserted,
@@ -34,7 +34,6 @@
  *  @param successBlock  the block to call on successful upload.
  *  @param failureBlock  the block to call on failed upload.
  */
-- (void) downloadUpdatedObjectsForEntity:(NSString*)entityName withSuccessBlock:(TKSyncSuccessBlock)successBlock andFailureBlock:(TKSyncFailureBlock)failureBlock;
 - (BFTask *)downloadUpdatedObjectsAsyncForEntity:(NSString *)entityName;
 
 /**
@@ -47,8 +46,9 @@
  *  @param successBlock  the block to call on successful upload.
  *  @param failureBlock  the block to call on failed upload.
  */
-- (void) uploadUpdatedObjects:(NSArray*)serverObjects WithSuccessBlock:(TKSyncSuccessBlock)successBlock andFailureBlock:(TKSyncFailureBlock)failureBlock;
 - (BFTask *)uploadUpdatedObjectsAsync:(NSArray *)serverObjects;
 
 - (NSArray*) toManyRelationshipKeysForEntity:(NSString*)name;
+
+
 @end

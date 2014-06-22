@@ -43,13 +43,14 @@
 
 - (id) assignUniqueObjectID {
     if ([self valueForKey:kTKDBUniqueIDField] == nil) {
+        // generate a uniqueID
         id objectId = nil;
         CFUUIDRef uuid = CFUUIDCreate(CFAllocatorGetDefault());
         objectId = (__bridge_transfer NSString *)CFUUIDCreateString(CFAllocatorGetDefault(), uuid);
         [self setValue:objectId forKey:kTKDBUniqueIDField];
         CFRelease(uuid);
     }
-    return nil;
+    return [self tk_uniqueObjectID];
 }
 
 #pragma mark Dictionary conversion methods
@@ -60,8 +61,7 @@
                                  [attributes count] + 1];
     
     for (NSString* attr in attributes) {
-        if ([attr isEqualToString:kTKDBServerIDField] || [attr isEqualToString:kTKDBUniqueIDField] ||
-            [attr isEqualToString:kTKDBUpdatedDateField] || [attr isEqualToString:kTKDBCreatedDateField] ||
+        if ([attr isEqualToString:kTKDBServerIDField] || [attr isEqualToString:kTKDBUniqueIDField] || [attr isEqualToString:kTKDBCreatedDateField] ||
             [attr isEqualToString:kTKDBIsDeletedField]) {
             continue;
         }

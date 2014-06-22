@@ -23,17 +23,10 @@
     return arrRelationships;
 }
 
-- (void)uploadInsertedObjects:(NSArray *)serverObjects withSuccessBlock:(TKSyncSuccessBlock)successBlock andFailureBlock:(TKSyncFailureBlock)failureBlock {
-    
-}
-
 - (BFTask *)uploadInsertedObjectsAsync:(NSArray *)serverObjects {
     return nil;
 }
 
-- (void)uploadUpdatedObjects:(NSArray *)serverObjects WithSuccessBlock:(TKSyncSuccessBlock)successBlock andFailureBlock:(TKSyncFailureBlock)failureBlock {
-    
-}
 
 - (BFTask *)uploadUpdatedObjectsAsync:(NSArray *)serverObjects {
     return nil;
@@ -43,8 +36,8 @@
     return nil;
 }
 
-- (void)downloadUpdatedObjectsForEntity:(NSString *)entityName withSuccessBlock:(TKSyncSuccessBlock)successBlock andFailureBlock:(TKSyncFailureBlock)failureBlock {
-    
+-(BFTask *)countOfObjectsForEntity:(NSString *)entityName {
+    return nil;
 }
 
 @end

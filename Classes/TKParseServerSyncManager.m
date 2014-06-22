@@ -11,12 +11,18 @@
 #import "TKDBCacheManager.h"
 #import <Bolts/Bolts.h>
 #import "Parse+Bolts.h"
+#import "NSManagedObjectContext+Sync.h"
+
 
 @implementation TKParseServerSyncManager
 
 - (TKServerObject*) serverObjectBasicInfoForParseObject:(PFObject*)parseObject {
     TKServerObject *serverObject = [[TKServerObject alloc] init];
     serverObject.entityName = parseObject.parseClassName;
+    NSEntityDescription *entity = [[TKDB defaultDB].rootContext.persistentStoreCoordinator.managedObjectModel entitiesByName][serverObject.entityName];
+    Class managedObjectClass = NSClassFromString(entity.managedObjectClassName);
+    serverObject.primaryKeyFields = [managedObjectClass primaryKeyFields];
+//    serverObject.entityClass = entity.managedObjectClassName;
     serverObject.uniqueObjectID = [parseObject valueForKey:kTKDBUniqueIDField];
     serverObject.serverObjectID = parseObject.objectId;
     serverObject.creationDate = parseObject.createdAt;
@@ -44,6 +50,7 @@
     [dictAttributes removeObjectsForKeys:@[kTKDBCreatedDateField, kTKDBServerIDField]];
     [dictAttributes setObject:@(serverObject.isDeleted) forKey:kTKDBIsDeletedField];
     [dictAttributes setObject:serverObject.uniqueObjectID forKey:kTKDBUniqueIDField];
+    [dictAttributes setObject:serverObject.lastModificationDate forKey:kTKDBUpdatedDateField];// for deleted objects
     [object setValuesForKeysWithDictionary:dictAttributes];
     return object;
 }
@@ -80,7 +87,8 @@
                     else {
                         PFObject *object = task.result;
                         TKServerObject *toOneServerObject = [self serverObjectBasicInfoForParseObject:object];
-                        if (toOneServerObject.isDeleted) {
+                        if (toOneServerObject.isDeleted &&
+                            [toOneServerObject.lastModificationDate compare:[TKDB defaultDB].lastSyncDate] == NSOrderedAscending) {
                             [relatedObjects setObject:[NSNull null] forKey:key];
                         }
                         else {
@@ -110,7 +118,11 @@
                         
                         for (PFObject *relatedObject in parseObjects) {
                             TKServerObject *serverRelatedObject = [self serverObjectBasicInfoForParseObject:relatedObject];
-                            if (!serverRelatedObject.isDeleted) {
+                            if (serverRelatedObject.isDeleted &&
+                                [serverRelatedObject.lastModificationDate compare:[TKDB defaultDB].lastSyncDate] == NSOrderedAscending) {
+//                                [arrServerObjects addObject:[NSNull null]];
+                            }
+                            else {
                                 [arrServerObjects addObject:serverRelatedObject];
                             }
                         }
@@ -191,42 +203,6 @@
     return serverObject;
 }
 
-- (void) uploadInsertedObjects:(NSArray*)serverObjects withSuccessBlock:(TKSyncSuccessBlock)successBlock andFailureBlock:(TKSyncFailureBlock)failureBlock {
-    NSMutableDictionary __block *dictServerObjects = [NSMutableDictionary dictionary];
-    NSMutableArray __block *arrayParseObjects = [NSMutableArray array];
-    
-    if ([serverObjects count] == 0) {
-        successBlock([NSArray array]);
-        return;
-    }
-    
-    for (TKServerObject *serverObject in serverObjects) {
-        // Put the object in the dictionary to be later retrieved for setting relationships.
-        [dictServerObjects setObject:serverObject forKey:serverObject.uniqueObjectID];
-        
-        // Create Parse object.
-        PFObject *object = [self newParseObjectBasicInfoForServerObject:serverObject];
-        [arrayParseObjects addObject:object];
-    }
-    
-    [PFObject saveAllInBackground:arrayParseObjects block:^(BOOL succeeded, NSError *error) {
-        if (error) {
-            failureBlock(nil, error);
-        }
-        else {
-            // Save all server IDs of objects to their respective server objects.
-            for (PFObject *parseObject in arrayParseObjects) {
-                NSString *uniqueID = [parseObject valueForKey:kTKDBUniqueIDField];
-                TKServerObject *serverObject = (TKServerObject*)dictServerObjects[uniqueID];
-                serverObject.serverObjectID = [parseObject objectId];
-                [[TKDBCacheManager sharedManager] mapServerObjectWithID:serverObject.serverObjectID toUniqueObjectWithID:serverObject.uniqueObjectID];
-            }
-            
-            successBlock([dictServerObjects allValues]);
-        }
-    }];
-}
-
 - (BFTask *)uploadInsertedObjectsAsync:(NSArray *)serverObjects {
     BFTaskCompletionSource *task = [BFTaskCompletionSource taskCompletionSource];
     
@@ -236,14 +212,87 @@
     else {
         NSMutableDictionary __block *dictServerObjects = [NSMutableDictionary dictionary];
         NSMutableArray __block *arrayParseObjects = [NSMutableArray array];
+        NSMutableDictionary __block *dictParseObjects = [NSMutableDictionary dictionary];
         
         for (TKServerObject *serverObject in serverObjects) {
             // Put the object in the dictionary to be later retrieved for setting relationships.
             [dictServerObjects setObject:serverObject forKey:serverObject.uniqueObjectID];
             
             // Create Parse object.
-            PFObject *object = [self newParseObjectBasicInfoForServerObject:serverObject];
-            [arrayParseObjects addObject:object];
+            PFObject *parseObject = [self newParseObjectBasicInfoForServerObject:serverObject];
+            [arrayParseObjects addObject:parseObject];
+            dictParseObjects[serverObject.uniqueObjectID] = parseObject;
+            
+            if ([serverObject.entityName isEqualToString:@"AccessCode"]) {
+                // create a new PFRole for student and parent
+                NSString *parentRoleName = serverObject.attributeValues[@"parentRoleName"];
+                PFRole *parentRole = [PFRole roleWithName:parentRoleName];
+                [parseObject setValue:parentRole forKey:@"parentRole"];
+                
+                NSString *studentRoleName = serverObject.attributeValues[@"studentRoleName"];
+                PFRole *studentRole = [PFRole roleWithName:studentRoleName];
+                [parseObject setValue:studentRole forKey:@"studentRole"];
+            }
+            else if ([serverObject.entityName isEqualToString:@"Student"]) {
+                
+                [self setACLForParseObject:parseObject withStudentServerObject:serverObject];
+            }
+            else {
+                // check for student related data
+                id studentVal = [serverObject.relatedObjects valueForKey:@"student"];
+                if (!studentVal) {
+                    studentVal = [serverObject.relatedObjects valueForKey:@"students"];
+                }
+                if (studentVal) {
+                    // has a student relation
+                    // get that student from db
+                    // check the AccessCodes table
+                    if ([studentVal isKindOfClass:[TKServerObject class]]) {
+                        // to-one relation
+                        [self setACLForParseObject:parseObject withStudentServerObject:studentVal];
+                    }
+                    else if ([studentVal isKindOfClass:[NSArray class]]) {
+                        // to-many relation
+                        NSArray *students = (NSArray *)studentVal;
+                        for (TKServerObject *studentServerObject in students) {
+                            [self setACLForParseObject:parseObject withStudentServerObject:studentServerObject];
+                        }
+                    }
+                }
+            }
+        }
+        
+        for (TKServerObject *serverObject in serverObjects) {
+            PFObject *parseObj = dictParseObjects[serverObject.uniqueObjectID];
+            
+            // check for attendancetype/ behaviorType/GradeType/GradableItem
+            if ([serverObject.entityName isEqualToString:@"Attendancetype"]) {
+                // check if it has attendances
+                NSArray *attendances = serverObject.relatedObjects[@"attendances"];
+                for (TKServerObject *attend in attendances) {
+                    NSManagedObject *attendance = [[TKDB defaultDB].syncContext objectWithURI:[NSURL URLWithString:attend.localObjectIDURL]];
+                    NSManagedObject *student = [attendance valueForKey:@"student"];
+                    [self setACLForParseObject:parseObj withStudent:student];
+                }
+            }
+            else if ([serverObject.entityName isEqualToString:@"Behaviortype"]) {
+                // check if it has attendances
+                NSArray *behaviors = serverObject.relatedObjects[@"behaviors"];
+                for (TKServerObject *behavior in behaviors) {
+                    NSManagedObject *behaviorObj = [[TKDB defaultDB].syncContext objectWithURI:[NSURL URLWithString:behavior.localObjectIDURL]];
+                    NSManagedObject *student = [behaviorObj valueForKey:@"student"];
+                    [self setACLForParseObject:parseObj withStudent:student];
+                }
+            }
+            else if ([serverObject.entityName isEqualToString:@"Gradableitem"]) {
+                // search across the grades, get student, add
+                NSArray *grades = serverObject.relatedObjects[@"grades"];
+                for (TKServerObject *grade in grades) {
+                    NSManagedObject *gradeObject = [[TKDB defaultDB].syncContext objectWithURI:[NSURL URLWithString:grade.localObjectIDURL]];
+                    NSManagedObject *student = [gradeObject valueForKey:@"student"];
+                    [self setACLForParseObject:parseObj withStudent:student];
+                }
+            }
         }
         
         [PFObject saveAllInBackground:arrayParseObjects block:^(BOOL succeeded, NSError *error) {
@@ -266,26 +315,25 @@
     return task.task;
 }
 
-- (void) downloadUpdatedObjectsForEntity:(NSString*)entityName withSuccessBlock:(TKSyncSuccessBlock)successBlock andFailureBlock:(TKSyncFailureBlock)failureBlock {
-    PFQuery *query = [PFQuery queryWithClassName:entityName];
-    [query whereKey:@"updatedAt" greaterThan:[TKDB defaultDB].lastSyncDate];
-    [query findObjectsInBackgroundWithBlock:^(NSArray *objects, NSError *error) {
-        if (error) {
-            failureBlock(nil, error);
-        }
-        else {
-            NSMutableArray *arrayServerObjects = [NSMutableArray array];
-            
-            // Convert objects to server objects.
-            for (PFObject *parseObject in objects) {
-                TKServerObject *serverObject = [self serverObjectForParseObject:parseObject];
-                [arrayServerObjects addObject:serverObject];
-                [[TKDBCacheManager sharedManager] mapServerObjectWithID:serverObject.serverObjectID toUniqueObjectWithID:serverObject.uniqueObjectID];
-            }
-            
-            successBlock(arrayServerObjects);
-        }
-    }];
+- (void)setACLForParseObject:(PFObject *)parseObject withStudentServerObject:(TKServerObject *)serverObject {
+    
+    NSManagedObject *studentManagedObject = [[TKDB defaultDB].syncContext objectWithURI:[NSURL URLWithString:serverObject.localObjectIDURL]];
+    [self setACLForParseObject:parseObject withStudent:studentManagedObject];
+}
+
+- (void)setACLForParseObject:(PFObject *)parseObject withStudent:(NSManagedObject *)studentManagedObject {
+    
+    NSManagedObject *accessCode = [studentManagedObject valueForKey:@"accessCode"];
+    
+    NSString *parentRoleName = [accessCode valueForKey:@"parentRoleName"];
+    if (parentRoleName) {
+        [parseObject.ACL setReadAccess:YES forRoleWithName:parentRoleName];
+    }
+    
+    NSString *studentRoleName = [accessCode valueForKey:@"studentRoleName"];
+    if (studentRoleName) {
+        [parseObject.ACL setReadAccess:YES forRoleWithName:studentRoleName];
+    }
 }
 
 - (BFTask *)downloadUpdatedObjectsAsyncForEntity:(NSString *)entityName {
@@ -302,6 +350,10 @@
             
             // Convert objects to server objects.
             for (PFObject *parseObject in parseObjects) {
+                // ignore anonymous data
+                if (parseObject.ACL == nil) {
+                    continue;
+                }
                 
                 BFTaskCompletionSource *subTask = [BFTaskCompletionSource taskCompletionSource];
                 
@@ -335,55 +387,6 @@
     }];
 }
 
-- (void) uploadUpdatedObjects:(NSArray*)serverObjects WithSuccessBlock:(TKSyncSuccessBlock)successBlock andFailureBlock:(TKSyncFailureBlock)failureBlock {
-    NSMutableArray *parseObjects = [NSMutableArray array];
-    
-    if ([serverObjects count] == 0) {
-        successBlock([NSArray array]);
-        return;
-    }
-    
-    for (TKServerObject *serverObject in serverObjects) {
-        PFObject *parseObject = [self existingParseObjectBasicInfoForServerObject:serverObject];
-        [parseObject fetchIfNeeded];
-        
-        for (NSString *key in serverObject.relatedObjects) {
-            if ([serverObject.relatedObjects[key] isKindOfClass:[TKServerObject class]]) {
-                TKServerObject *relatedServerObject = serverObject.relatedObjects[key];
-                NSString *serverObjectID = (relatedServerObject.serverObjectID == nil) ? [[TKDBCacheManager sharedManager] serverObjectIDForUniqueObjectID:relatedServerObject.uniqueObjectID] : relatedServerObject.serverObjectID;
-                PFObject *relatedParseObject = [PFObject objectWithoutDataWithClassName:relatedServerObject.entityName objectId:serverObjectID];
-                [parseObject setValue:relatedParseObject forKey:key];
-            }
-            else if ([serverObject.relatedObjects[key] isKindOfClass:[NSArray class]]) {
-                PFRelation *relation = [parseObject relationForKey:key];
-                NSArray *arrChildObjects = [[relation query] findObjects];
-                for (PFObject *childObject in arrChildObjects) {
-                    [relation removeObject:childObject];
-                }
-                
-                for (TKServerObject *childObject in serverObject.relatedObjects[key]) {
-                    NSString *serverObjectID = (childObject.serverObjectID == nil) ? [[TKDBCacheManager sharedManager] serverObjectIDForUniqueObjectID:childObject.uniqueObjectID] : childObject.serverObjectID;
-                    [relation addObject:[PFObject objectWithoutDataWithClassName:childObject.entityName objectId:serverObjectID]];
-                }
-            }
-            else if (serverObject.relatedObjects[key] == [NSNull null]) {
-                [parseObject removeObjectForKey:key];
-            }
-        }
-        
-        [parseObjects addObject:parseObject];
-    }
-    
-    [PFObject saveAllInBackground:parseObjects block:^(BOOL succeeded, NSError *error) {
-        if (error) {
-            failureBlock(nil, error);
-        }
-        else {
-            successBlock(parseObjects);
-        }
-    }];
-}
-
 - (BFTask *)uploadUpdatedObjectsAsync:(NSArray *)serverObjects {
     
     if ([serverObjects count] == 0) {
@@ -403,6 +406,37 @@
             
             [[parseObj tk_fetchIfNeededAsync] continueWithSuccessBlock:^id(BFTask *task) {
                 PFObject *parseObject = task.result;
+                
+                
+                // check for attendancetype/ behaviorType/GradeType/GradableItem
+                if ([serverObject.entityName isEqualToString:@"Attendancetype"]) {
+                    // check if it has attendances
+                    NSArray *attendances = serverObject.relatedObjects[@"attendances"];
+                    for (TKServerObject *attend in attendances) {
+                        NSManagedObject *attendance = [[TKDB defaultDB].syncContext objectWithURI:[NSURL URLWithString:attend.localObjectIDURL]];
+                        NSManagedObject *student = [attendance valueForKey:@"student"];
+                        [self setACLForParseObject:parseObj withStudent:student];
+                    }
+                }
+                else if ([serverObject.entityName isEqualToString:@"Behaviortype"]) {
+                    // check if it has attendances
+                    NSArray *behaviors = serverObject.relatedObjects[@"behaviors"];
+                    for (TKServerObject *behavior in behaviors) {
+                        NSManagedObject *behaviorObj = [[TKDB defaultDB].syncContext objectWithURI:[NSURL URLWithString:behavior.localObjectIDURL]];
+                        NSManagedObject *student = [behaviorObj valueForKey:@"student"];
+                        [self setACLForParseObject:parseObj withStudent:student];
+                    }
+                }
+                else if ([serverObject.entityName isEqualToString:@"Gradableitem"]) {
+                    // search across the grades, get student, add
+                    NSArray *grades = serverObject.relatedObjects[@"grades"];
+                    for (TKServerObject *grade in grades) {
+                        NSManagedObject *gradeObject = [[TKDB defaultDB].syncContext objectWithURI:[NSURL URLWithString:grade.localObjectIDURL]];
+                        NSManagedObject *student = [gradeObject valueForKey:@"student"];
+                        [self setACLForParseObject:parseObj withStudent:student];
+                    }
+                }
+                
                 
                 // enumerate and get the related object(s)
                 
@@ -482,56 +516,12 @@
     }];
 }
 
-
-- (BFTask *)_uploadUpdatedObjectsAsync:(NSArray *)serverObjects {
-    BFTaskCompletionSource *task = [BFTaskCompletionSource taskCompletionSource];
-    
-    if ([serverObjects count] == 0) {
-        [task setResult:@[]];
-    }
-    else {
-        NSMutableArray *parseObjects = [NSMutableArray array];
-        for (TKServerObject *serverObject in serverObjects) {
-            PFObject *parseObject = [self existingParseObjectBasicInfoForServerObject:serverObject];
-            [parseObject fetchIfNeeded];
-            
-            for (NSString *key in serverObject.relatedObjects) {
-                if ([serverObject.relatedObjects[key] isKindOfClass:[TKServerObject class]]) {
-                    TKServerObject *relatedServerObject = serverObject.relatedObjects[key];
-                    NSString *serverObjectID = (relatedServerObject.serverObjectID == nil) ? [[TKDBCacheManager sharedManager] serverObjectIDForUniqueObjectID:relatedServerObject.uniqueObjectID] : relatedServerObject.serverObjectID;
-                    PFObject *relatedParseObject = [PFObject objectWithoutDataWithClassName:relatedServerObject.entityName objectId:serverObjectID];
-                    [parseObject setValue:relatedParseObject forKey:key];
-                }
-                else if ([serverObject.relatedObjects[key] isKindOfClass:[NSArray class]]) {
-                    PFRelation *relation = [parseObject relationForKey:key];
-                    NSArray *arrChildObjects = [[relation query] findObjects];
-                    for (PFObject *childObject in arrChildObjects) {
-                        [relation removeObject:childObject];
-                    }
-                    
-                    for (TKServerObject *childObject in serverObject.relatedObjects[key]) {
-                        NSString *serverObjectID = (childObject.serverObjectID == nil) ? [[TKDBCacheManager sharedManager] serverObjectIDForUniqueObjectID:childObject.uniqueObjectID] : childObject.serverObjectID;
-                        [relation addObject:[PFObject objectWithoutDataWithClassName:childObject.entityName objectId:serverObjectID]];
-                    }
-                }
-                else if (serverObject.relatedObjects[key] == [NSNull null]) {
-                    [parseObject removeObjectForKey:key];
-                }
-            }
-            
-            [parseObjects addObject:parseObject];
-        }
+- (BFTask *)countOfObjectsForEntity:(NSString *)entityName {
+    return [[BFTask taskWithResult:nil] continueWithBlock:^id(BFTask *task) {
+        PFQuery *query = [PFQuery queryWithClassName:entityName];
+        [query whereKey:@"updatedAt" greaterThan:[TKDB defaultDB].lastSyncDate];
         
-        [PFObject saveAllInBackground:parseObjects block:^(BOOL succeeded, NSError *error) {
-            if (error) {
-                [task setError:error];
-            }
-            else {
-                [task setResult:parseObjects];
-            }
-        }];
-        
-    }
-    return task.task;
+        return [query tk_countOfObjectsAsync];
+    }];
 }
 @end

@@ -13,10 +13,13 @@
 #define kTKDBServerIDField          @"serverObjectID"
 #define kTKDBIsDeletedField         @"isDeleted"
 #define kTKDBCreatedDateField       @"createdDate"
-#define kTKDBUpdatedDateField       @"updatedDate"
+#define kTKDBUpdatedDateField       @"lastModifiedDate"
 
 #define kLastSyncDate @"LastSync"
-#define kEntities @[@"Classroom", @"Student", @"Attendance", @"AttendanceType"]
+#define kEntities @[@"Classroom", @"Student", @"Behavior", @"Behaviortype"]
+
+NSString * const TKDBSyncDidSucceedNotification;
+NSString * const TKDBSyncFailedNotification;
 
 typedef void (^TKSyncSuccessBlock)(NSArray *objects);
 typedef void (^TKSyncFailureBlock)(NSArray *objects, NSError *error);
@@ -69,8 +72,6 @@ while(condition) { \
 
 - (NSDate*) lastSyncDate;
 - (void) setLastSyncDate:(NSDate*)date;
-
-- (void) syncWithSuccessBlock:(TKSyncSuccessBlock)successBlock andFailureBlock:(TKSyncFailureBlock)failureBlock;
 
 - (BFTask *)sync;
 

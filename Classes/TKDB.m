@@ -15,6 +15,13 @@
 #import "NSManagedObject+Sync.h"
 #import "NSManagedObjectContext+Sync.h"
 
+NSString * const TKDBSyncDidSucceedNotification = @"TKDBSyncDidSucceedNotification";
+NSString * const TKDBSyncFailedNotification = @"TKDBSyncFailedNotification";
+
+@interface TKDB ()
+@property (nonatomic, strong) TKParseServerSyncManager *manager;
+@end
+
 @implementation TKDB {
     /**
      *  Used to stop notifications form firing during sync.
@@ -94,13 +101,8 @@
         }
     }
     
-    NSError *error;
     [[TKDB defaultDB].syncContext mergeChangesFromContextDidSaveNotification:notification];
-    
-    if (error) {
-#warning Handle this error.
-        abort();
-    }
+    [[TKDBCacheManager sharedManager] saveToFileSystem];
 }
 
 - (void) contextWillSave:(NSNotification*)notification {
@@ -150,6 +152,7 @@
             entry.serverObjectID = object.tk_serverObjectID;
             entry.uniqueObjectID = object.tk_uniqueObjectID;
             entry.entity = object.entity.name;
+            entry.lastModificationDate = [NSDate date];
             [[TKDBCacheManager sharedManager] addCacheEntry:entry];
         }
         
@@ -180,6 +183,10 @@
     
     for (NSManagedObject *object in [TKDB defaultDB].rootContext.deletedObjects) {
         // If there is an insert entry for this object, we remove it.
+        // check if this was a nil object ==> weird issue where deleted objects sent multiple notifications on different save operations.
+        if (object.tk_uniqueObjectID == nil) {
+            continue;
+        }
         TKDBCacheEntry *entry = [[TKDBCacheManager sharedManager] entryForObjectID:object.tk_uniqueObjectID withType:TKDBCacheInsert];
         
         if (entry) {
@@ -203,6 +210,7 @@
         entry.localObjectIDURL = [[[object objectID] URIRepresentation] absoluteString];
         entry.serverObjectID = [object tk_serverObjectID];
         entry.uniqueObjectID = object.tk_uniqueObjectID;
+        entry.lastModificationDate = [NSDate date];
         entry.entity = object.entity.name;
         [[TKDBCacheManager sharedManager] addCacheEntry:entry];
     }
@@ -223,169 +231,21 @@
     referenceContext.persistentStoreCoordinator = _rootContext.persistentStoreCoordinator;
     _referenceContext = referenceContext;
     _referenceContext.mergePolicy = NSOverwriteMergePolicy;
+    
+    self.entities = [rootContext.persistentStoreCoordinator.managedObjectModel entitiesByName].allKeys;
 }
 
 - (NSDate*) lastSyncDate {
-    NSDate *date = [[NSUserDefaults standardUserDefaults] objectForKey:@"lastSyncDate"];
+    NSDate *date = [[NSUserDefaults standardUserDefaults] objectForKey:[NSString stringWithFormat:@"%i-%@", self.hash, @"lastSyncDate"]];
     if (!date) {
-        [[NSUserDefaults standardUserDefaults] setValue:[NSDate dateWithTimeIntervalSince1970:0] forKey:@"lastSyncDate"];
+        [[NSUserDefaults standardUserDefaults] setValue:[NSDate dateWithTimeIntervalSince1970:0] forKey:[NSString stringWithFormat:@"%i-%@", self.hash, @"lastSyncDate"]];
     }
-    return [[NSUserDefaults standardUserDefaults] objectForKey:@"lastSyncDate"];
+    return [[NSUserDefaults standardUserDefaults] objectForKey:[NSString stringWithFormat:@"%i-%@", self.hash, @"lastSyncDate"]];
 }
 
 - (void) setLastSyncDate:(NSDate*)date {
-     [[NSUserDefaults standardUserDefaults] setValue:date forKey:@"lastSyncDate"];
+     [[NSUserDefaults standardUserDefaults] setValue:date forKey:[NSString stringWithFormat:@"%i-%@", self.hash, @"lastSyncDate"]];
 }
-
-- (void) syncWithSuccessBlock:(TKSyncSuccessBlock)successBlock andFailureBlock:(TKSyncFailureBlock)failureBlock {
-    
-    dispatch_async(dispatch_queue_create("sync", nil), ^{
-        NSArray *localInsertedObjects = [TKServerObjectHelper getInsertedObjectsFromCache];
-        NSArray __block *localUpdatedObjects = [TKServerObjectHelper getUpdatedObjectsFromCache];
-        NSArray __block *insertedObjectsWithServerIDs;
-        NSMutableSet *localUpdatesNoConflict;
-        NSMutableSet *serverUpdatesNoConflict;
-        NSMutableSet *conflictPairs = [NSMutableSet set];
-        TKParseServerSyncManager *manager = [[TKParseServerSyncManager alloc] init];
-        NSMutableArray __block *arrServerObjects = [NSMutableArray array];
-        NSError __block *syncError;
-        [[TKDBCacheManager sharedManager] startCheckpoint];
-        dispatch_semaphore_t sem = dispatch_semaphore_create(0);
-        
-#pragma mark Step 1: Download all objects updated on the server since last sync
-        for (NSString *entity in self.entities) {
-            [manager downloadUpdatedObjectsForEntity:entity withSuccessBlock:^(NSArray *objects) {
-                [arrServerObjects addObjectsFromArray:objects];
-                dispatch_semaphore_signal(sem);
-            } andFailureBlock:^(NSArray *objects, NSError *error) {
-                syncError = error;
-                dispatch_semaphore_signal(sem);
-            }];
-            dispatch_semaphore_wait(sem, DISPATCH_TIME_FOREVER);
-            if (syncError) {
-                failureBlock(nil,syncError);
-                [[TKDBCacheManager sharedManager] rollbackToCheckpoint];
-                return;
-            }
-        }
-        
-#pragma mark Step 2: Insert newly created objects on local from server and vice versa.
-        NSPredicate *predicate = [NSPredicate predicateWithFormat:@"creationDate > %@", [self lastSyncDate]];
-        NSArray *newServerObjects = [arrServerObjects filteredArrayUsingPredicate:predicate];
-        [TKServerObjectHelper insertServerObjectsInLocalDatabase:newServerObjects];
-        [manager uploadInsertedObjects:localInsertedObjects withSuccessBlock:^(NSArray *objects) {
-            insertedObjectsWithServerIDs = objects;
-            dispatch_semaphore_signal(sem);
-        } andFailureBlock:^(NSArray *objects, NSError *error) {
-            syncError = error;
-            dispatch_semaphore_signal(sem);
-        }];
-        
-        dispatch_semaphore_wait(sem, DISPATCH_TIME_FOREVER);
-        if (syncError) {
-            failureBlock(nil,syncError);
-            [[TKDBCacheManager sharedManager] rollbackToCheckpoint];
-            return;
-        }
-        
-#pragma mark Step 3: Update managed objects with server IDs
-        [TKServerObjectHelper updateServerIDInLocalDatabase:insertedObjectsWithServerIDs];
-        
-#pragma mark Step 4: Upload inserted objects as updates to wire relationships on the cloud.
-        [manager uploadUpdatedObjects:insertedObjectsWithServerIDs WithSuccessBlock:^(NSArray *objects) {
-            dispatch_semaphore_signal(sem);
-        } andFailureBlock:^(NSArray *objects, NSError *error) {
-            syncError = error;
-            dispatch_semaphore_signal(sem);
-        }];
-        
-        dispatch_semaphore_wait(sem, DISPATCH_TIME_FOREVER);
-        if (syncError) {
-            failureBlock(nil,syncError);
-            [[TKDBCacheManager sharedManager] rollbackToCheckpoint];
-            return;
-        }
-        
-#pragma mark Step 5: Separate updated objects into local no conflict, server no conflict, and conflict
-        predicate = [NSPredicate predicateWithFormat:@"creationDate <= %@", [self lastSyncDate]];
-        NSArray *updatedServerObjects = [arrServerObjects filteredArrayUsingPredicate:predicate];
-        NSSet *updatedServerObjectsSet = [NSSet setWithArray:updatedServerObjects];
-        NSSet *updatedLocalObjectsSet = [NSSet setWithArray:localUpdatedObjects];
-        serverUpdatesNoConflict = [[updatedServerObjectsSet objectsPassingTest:^BOOL(id obj, BOOL *stop) {
-            return ![localUpdatedObjects containsObject:obj];
-        }] mutableCopy];
-        localUpdatesNoConflict = [[updatedLocalObjectsSet objectsPassingTest:^BOOL(id obj, BOOL *stop) {
-            return ![updatedServerObjectsSet containsObject:obj];
-        }] mutableCopy];
-        for (TKServerObject *serverObject in updatedServerObjectsSet) {
-            for (TKServerObject *localObject in updatedLocalObjectsSet) {
-                if ([serverObject isEqual:localObject]) {
-                    TKDBCacheEntry *entry = [[TKDBCacheManager sharedManager] entryForObjectID:localObject.uniqueObjectID withType:TKDBCacheUpdate];
-                    TKServerObject *shadowServerObject = entry.originalObject;
-                    [conflictPairs addObject:[[TKServerObjectConflictPair alloc] initWithServerObject:serverObject localObject:localObject shadowObject:shadowServerObject]];
-                }
-            }
-        }
-        
-#pragma mark Step 6: Resolve conflicts
-        for (TKServerObjectConflictPair *conflictPair in conflictPairs) {
-            [TKServerObjectHelper resolveConflict:conflictPair localUpdates:localUpdatedObjects serverUpdates:updatedServerObjects];
-            if (conflictPair.resolutionType == TKDBMergeLocalWins) {
-                [serverUpdatesNoConflict addObject:conflictPair.outputObject];
-            }
-            else if (conflictPair.resolutionType == TKDBMergeServerWins) {
-                [localUpdatesNoConflict addObject:conflictPair.outputObject];
-            }
-            else if (conflictPair.resolutionType == TKDBMergeBothUpdated) {
-                [serverUpdatesNoConflict addObject:conflictPair.outputObject];
-                [localUpdatesNoConflict addObject:conflictPair.outputObject];                
-            }
-        }
-        
-#pragma mark Step 7: Save objects updated on the server to local db (no conflict + conflict resolved)
-        [TKServerObjectHelper updateServerObjectsInLocalDatabase:[serverUpdatesNoConflict allObjects]];
-        
-#pragma mark Step 8: Save objects updated locally to server (no conflict + conflict resolved)
-        [manager uploadUpdatedObjects:[localUpdatesNoConflict allObjects] WithSuccessBlock:^(NSArray *objects) {
-            dispatch_semaphore_signal(sem);
-        } andFailureBlock:^(NSArray *objects, NSError *error) {
-            syncError = error;
-            dispatch_semaphore_signal(sem);
-        }];
-        
-        dispatch_semaphore_wait(sem, DISPATCH_TIME_FOREVER);
-        if (syncError) {
-            failureBlock(nil,syncError);
-            [[TKDBCacheManager sharedManager] rollbackToCheckpoint];
-            return;
-        }
-        
-        NSManagedObjectContext __weak *weakSyncContext = self.syncContext;
-
-#warning Replace with MagicalRecord save to persistent store.
-        [self.syncContext performBlockAndWait:^{
-            NSError *error;
-            [weakSyncContext save:&error];
-            disableNotifications = YES;
-            [weakSyncContext.parentContext save:&error];
-            disableNotifications = NO;
-        }];
-        
-        if (syncError) {
-            failureBlock(nil,syncError);
-            [[TKDBCacheManager sharedManager] rollbackToCheckpoint];
-            return;
-        }
-        else {
-            [self setLastSyncDate:[NSDate date]];
-            [[TKDBCacheManager sharedManager] clearCache];
-            [[TKDBCacheManager sharedManager] endCheckpointSuccessfully];
-            successBlock(nil);
-        }
-        
-    });
-}
-
 
 // step 1
 - (BFTask *)downloadAllServerUpdatesWithManager:(TKParseServerSyncManager *)manager {
@@ -514,7 +374,7 @@
 }
 
 // step 6
-- (void)resolveConflicts:(NSArray *)conflictPairs withLocalUpdates:(NSMutableSet **)localUpdatesNoConflict andServerUpdates:(NSMutableSet **)serverUpdatesNoConflict {
+- (void)_resolveConflicts:(NSArray *)conflictPairs withLocalUpdates:(NSMutableSet **)localUpdatesNoConflict andServerUpdates:(NSMutableSet **)serverUpdatesNoConflict {
     for (TKServerObjectConflictPair *conflictPair in conflictPairs) {
         [TKServerObjectHelper resolveConflict:conflictPair localUpdates:[*localUpdatesNoConflict allObjects] serverUpdates:[*serverUpdatesNoConflict allObjects]];
         if (conflictPair.resolutionType == TKDBMergeLocalWins) {
@@ -578,14 +438,310 @@
         [weakSyncContext.parentContext save:error];
         disableNotifications = NO;
     }];
-    
+
     [self setLastSyncDate:[NSDate date]];
     [[TKDBCacheManager sharedManager] clearCache];
     [[TKDBCacheManager sharedManager] endCheckpointSuccessfully];
 }
 
 
+/*
+ 
+ 1-  pull server changes
+ 2-  get local changes
+ 3-  detect conflicts
+ 4-  resolve conflicts
+ 5-  save locals.
+ 6-  upload new inserts.
+ 7-  update local inserts with serverIds
+ 8-  wire relations
+ 9-  push all changes.
+ 10- clean & save to db
+ */
+
+- (BFTask *)pullServerChanges {
+    __weak TKDB *weakself = self;
+    return [[BFTask taskWithResult:nil] continueWithBlock:^id(BFTask *task) {
+        NSMutableArray __block *arrServerObjects = [NSMutableArray array];
+        
+        NSMutableArray *tasks = @[].mutableCopy;
+        for (NSString *entity in weakself.entities) {
+            BFTaskCompletionSource *source = [BFTaskCompletionSource taskCompletionSource];
+            
+            [[weakself.manager downloadUpdatedObjectsAsyncForEntity:entity] continueWithBlock:^id(BFTask *task) {
+                if (task.isCancelled) {
+                    [source cancel];
+                }
+                else if (task.error) {
+                    [source setError:task.error];
+                }
+                else {
+                    NSArray *obejcts = task.result;
+                    [arrServerObjects addObjectsFromArray:obejcts];
+                    [source setResult:obejcts];
+                }
+                return nil;
+            }];
+            
+            [tasks addObject:source.task];
+        }
+        return [[BFTask taskForCompletionOfAllTasks:tasks] continueWithBlock:^id(BFTask *task) {
+            // this will be executed after *all* the group tasks have completed
+            if (task.error) {
+                [[TKDBCacheManager sharedManager] rollbackToCheckpoint];
+                return [BFTask taskWithError:task.error];
+            }
+            else {
+                return [BFTask taskWithResult:arrServerObjects];
+            }
+        }];
+    }];
+}
+
+- (NSArray *)detectConflictsWithServerObjects:(NSArray *)serverObjects localObjects:(NSArray *)localObjects localUpdatesNoConflicts:(NSMutableSet **)localUpdatesNoConflicts serverUpdatesNoConflicts:(NSMutableSet **)serverUpdatesNoConflicts {
+    
+    NSMutableSet *conflictPairs = [NSMutableSet set];
+    
+    NSMutableSet *updatedObjects = [NSMutableSet setWithArray:serverObjects];
+    
+    NSSet *updatedServerObjectsSet = [NSSet setWithArray:serverObjects];
+    NSSet *updatedLocalObjectsSet = [NSSet setWithArray:localObjects];
+    
+    *serverUpdatesNoConflicts = [[updatedServerObjectsSet objectsPassingTest:^BOOL(id obj, BOOL *stop) {
+        return ![updatedLocalObjectsSet containsObject:obj];
+    }] mutableCopy];
+    
+    *localUpdatesNoConflicts = [[updatedLocalObjectsSet objectsPassingTest:^BOOL(id obj, BOOL *stop) {
+        return ![updatedServerObjectsSet containsObject:obj];
+    }] mutableCopy];
+    
+    
+    for (TKServerObject *serverObject in updatedObjects) {
+        
+        for (TKServerObject *otherObject in localObjects) {
+            if ([serverObject isEqual:otherObject]) {
+                TKDBCacheEntry *entry = [[TKDBCacheManager sharedManager] entryForObjectID:serverObject.uniqueObjectID withType:TKDBCacheUpdate];
+                TKServerObject *shadowServerObject = entry.originalObject;
+                [conflictPairs addObject:[[TKServerObjectConflictPair alloc] initWithServerObject:serverObject localObject:otherObject shadowObject:shadowServerObject]];
+                
+                if (serverObject.isDeleted) {
+                    // get relatedObjects of serverObject
+                    for (NSString *key in serverObject.relatedObjects) {
+                        id val = serverObject.relatedObjects[key];
+                        if ([val isKindOfClass:[NSArray class]]) {
+                            for (TKServerObject *_relatedObject in val) {
+                                TKServerObject *relatedObject = _relatedObject;
+                                for (TKServerObject *_server in serverObjects) {
+                                    if ([_server.uniqueObjectID isEqualToString:relatedObject.uniqueObjectID]) {
+                                        relatedObject = _server;
+                                        // remove that object from serverUpadatesNoConflicts
+                                        [*serverUpdatesNoConflicts removeObject:_server];
+                                        break;
+                                    }
+                                }
+                                
+                                NSManagedObject *localRelatedObject = [self objectOfEntity:relatedObject.entityName withUniqueID:relatedObject.uniqueObjectID];
+                                if (localRelatedObject == nil) {
+                                    // object not found
+                                } else {
+                                    // get entry for it
+                                    TKDBCacheEntry *entry = [self entryWithObject:localRelatedObject];
+                                    TKServerObject *shadowServerObject = entry.originalObject;
+                                    TKServerObject *localServerObject = [localRelatedObject toServerObject];
+                                    localServerObject.lastModificationDate = otherObject.lastModificationDate;
+                                    [conflictPairs addObject:[[TKServerObjectConflictPair alloc] initWithServerObject:relatedObject localObject:localServerObject shadowObject:shadowServerObject]];
+                                }
+                            }
+                        }
+                        else if ([val isKindOfClass:[TKServerObject class]]) {
+                            TKServerObject *relatedObject = val;
+                            // search for relatedObject in the serverObjects
+                            for (TKServerObject *_server in serverObjects) {
+                                if ([_server.uniqueObjectID isEqualToString:relatedObject.uniqueObjectID]) {
+                                    relatedObject = _server;
+                                    // remove that object from serverUpadatesNoConflicts
+                                    [*serverUpdatesNoConflicts removeObject:_server];
+                                    break;
+                                }
+                            }
+                            // get the localObject of it
+                            NSManagedObject *localRelatedObject = [self objectOfEntity:relatedObject.entityName withUniqueID:relatedObject.uniqueObjectID];
+                            if (localRelatedObject == nil) {
+                                // object not found
+                            } else {
+                                // get entry for it
+                                TKDBCacheEntry *entry = [self entryWithObject:localRelatedObject];
+                                TKServerObject *shadowServerObject = entry.originalObject;
+                                TKServerObject *localServerObject = [localRelatedObject toServerObject];
+                                localServerObject.lastModificationDate = otherObject.lastModificationDate;
+                                [conflictPairs addObject:[[TKServerObjectConflictPair alloc] initWithServerObject:relatedObject localObject:localServerObject shadowObject:shadowServerObject]];
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    return [conflictPairs allObjects];
+}
+
+- (TKDBCacheEntry *)entryWithObject:(NSManagedObject *)managedObject {
+    TKDBCacheEntry *entry = [[TKDBCacheManager sharedManager] entryForObjectID:managedObject.tk_uniqueObjectID withType:TKDBCacheUpdate];
+    if (!entry) {
+        entry = [[TKDBCacheEntry alloc] initWithType:TKDBCacheUpdate];
+        entry.localObjectIDURL = [[[managedObject objectID] URIRepresentation] absoluteString];
+        entry.serverObjectID = managedObject.tk_serverObjectID;
+        entry.uniqueObjectID = managedObject.tk_uniqueObjectID;
+        entry.entity = managedObject.entity.name;
+        [[TKDBCacheManager sharedManager] addCacheEntry:entry];
+        
+        TKServerObject *original = [managedObject toServerObjectInContext:[TKDB defaultDB].referenceContext];
+        original.isOriginal = YES;
+        entry.originalObject = original;
+    }
+    return entry;
+}
+
+- (NSManagedObject *)objectOfEntity:(NSString *)entity withUniqueID:(NSString *)uniqueID {
+    NSFetchRequest *fetch = [NSFetchRequest fetchRequestWithEntityName:entity];
+    fetch.predicate = [NSPredicate predicateWithFormat:@"%K == %@", kTKDBUniqueIDField, uniqueID];
+    NSError *error;
+    
+    NSArray *array = [self.syncContext executeFetchRequest:fetch error:&error];
+    
+    return [array lastObject];
+}
+
+- (void)resolveConflicts:(NSArray *)conflicts withLocalUpdates:(NSMutableSet **)localUpdatesNoConflicts andServerUpdates:(NSMutableSet **)serverUpdatesNoConflicts {
+    for (TKServerObjectConflictPair *conflictPair in conflicts) {
+        [TKServerObjectHelper resolveConflict:conflictPair localUpdates:[*localUpdatesNoConflicts allObjects] serverUpdates:[*serverUpdatesNoConflicts allObjects]];
+        if (conflictPair.resolutionType == TKDBMergeLocalWins) {
+            [*serverUpdatesNoConflicts addObject:conflictPair.outputObject];
+        }
+        else if (conflictPair.resolutionType == TKDBMergeServerWins) {
+            [*localUpdatesNoConflicts addObject:conflictPair.outputObject];
+        }
+        else if (conflictPair.resolutionType == TKDBMergeBothUpdated) {
+            [*serverUpdatesNoConflicts addObject:conflictPair.outputObject];
+            [*localUpdatesNoConflicts addObject:conflictPair.outputObject];
+        }
+    }
+}
+
+- (BFTask *)pushNewLocalObjects:(NSArray *)newObjects {
+    // upload local objects
+    return [[self.manager uploadInsertedObjectsAsync:newObjects] continueWithBlock:^id(BFTask *task) {
+        if (task.error) {
+            [[TKDBCacheManager sharedManager] rollbackToCheckpoint];
+            return [BFTask taskWithError:task.error];
+        }
+        else {
+            return [BFTask taskWithResult:task.result];
+        }
+    }];
+}
+
+- (BFTask *)pushNewLocalObjectsWithRelations:(NSArray *)objectsWithRelations {
+    return [[self.manager uploadUpdatedObjectsAsync:objectsWithRelations] continueWithBlock:^id(BFTask *task) {
+        if (task.error) {
+            [[TKDBCacheManager sharedManager] rollbackToCheckpoint];
+            return [BFTask taskWithError:task.error];
+        }
+        else {
+            return [BFTask taskWithResult:task.result];
+        }
+    }];
+
+}
+
 - (BFTask *)sync {
+    self.manager = [[TKParseServerSyncManager alloc] init];
+
+    [[TKDBCacheManager sharedManager] startCheckpoint];
+    
+    __weak TKDB *weakself = self;
+
+    CFTimeInterval __block startTime = CACurrentMediaTime();
+
+    return [[self pullServerChanges] continueWithSuccessBlock:^id(BFTask *pullTask) {
+        CFTimeInterval __block endTime = CACurrentMediaTime();
+        NSNumber __block *step1Time = @(endTime - startTime);
+
+        startTime = CACurrentMediaTime();
+        
+        NSMutableArray *arrServerObjects = pullTask.result;
+        
+        NSArray *localInsertedObjects = [TKServerObjectHelper getInsertedObjectsFromCache];
+        NSArray *localUpdatedObjects = [TKServerObjectHelper getUpdatedObjectsFromCache];
+        
+        NSMutableSet *localUpdatesNoConflicts = [NSMutableSet set];
+        NSMutableSet *serverUpdatesNoConflicts = [NSMutableSet set];
+        
+        NSArray *conflicts = [weakself detectConflictsWithServerObjects:arrServerObjects localObjects:[localUpdatedObjects arrayByAddingObjectsFromArray:localInsertedObjects] localUpdatesNoConflicts:&localUpdatesNoConflicts serverUpdatesNoConflicts:&serverUpdatesNoConflicts];
+        
+        [weakself resolveConflicts:conflicts withLocalUpdates:&localUpdatesNoConflicts andServerUpdates:&serverUpdatesNoConflicts];
+        
+        endTime = CACurrentMediaTime();
+        NSNumber __block *step2Time = @(endTime - startTime);
+        
+        // conflict management should return all server updates
+        // @param serverUpdatesNoConflicts should have all server changes with conflicts resolved.
+        
+        // save serverChanges
+        [TKServerObjectHelper updateServerObjectsInLocalDatabase:[serverUpdatesNoConflicts allObjects]];
+        
+        NSMutableSet *objectsSet = [NSMutableSet setWithSet:localUpdatesNoConflicts];
+        // detect new objects
+        NSSet *newObjects = [objectsSet filteredSetUsingPredicate:[NSPredicate predicateWithFormat:@"serverObjectID == nil"]];
+        
+        [objectsSet minusSet:newObjects];
+        
+        startTime = CACurrentMediaTime();
+        return [[weakself pushNewLocalObjects:newObjects.allObjects] continueWithSuccessBlock:^id(BFTask *task) {
+            endTime = CACurrentMediaTime();
+            NSNumber __block *uploadingLocalInserts = @(endTime - startTime);
+            
+            NSArray *newObjectsWithServerIDs = task.result;
+            
+            [TKServerObjectHelper updateServerIDInLocalDatabase:newObjectsWithServerIDs];
+            
+            // combine newObjectsWithServerIDs with localUpdates
+            NSArray *allObjects = [objectsSet.allObjects arrayByAddingObjectsFromArray:newObjectsWithServerIDs];
+            
+            // then push local relations
+            startTime = CACurrentMediaTime();
+            return [[weakself pushNewLocalObjectsWithRelations:allObjects] continueWithSuccessBlock:^id(BFTask *task) {
+                endTime = CACurrentMediaTime();
+                NSNumber __block *uploadingLocalChanges = @(endTime - startTime);
+                
+                // save to Db
+                NSError __block *savingError;
+                [weakself.syncContext performBlockAndWait:^{
+                    [weakself.syncContext save:&savingError];
+                    disableNotifications = YES;
+                    [weakself.syncContext.parentContext save:&savingError];
+                    disableNotifications = NO;
+                }];
+                
+                if (savingError) {
+                    // rollback and
+                    [[TKDBCacheManager sharedManager] rollbackToCheckpoint];
+                    return [BFTask taskWithError:savingError];
+                }
+                else {
+                    [weakself setLastSyncDate:[NSDate date]];
+                    [[TKDBCacheManager sharedManager] clearCache];
+                    [[TKDBCacheManager sharedManager] endCheckpointSuccessfully];
+                }
+                
+                return [BFTask taskWithResult:@{@"Downloading server changes": step1Time, @"Resolving Conflicts" : step2Time, @"Uploading local Inserts": uploadingLocalInserts, @"Uploading local updates": uploadingLocalChanges}];
+            }];
+        }];
+    }];
+}
+
+- (BFTask *)_sync {
     TKParseServerSyncManager *manager = [[TKParseServerSyncManager alloc] init];
     
     NSMutableArray __block *arrShadowObjects;
@@ -640,6 +796,7 @@
                         return [BFTask taskWithError:savingError];
                     }
                     else {
+                        [[NSNotificationCenter defaultCenter] postNotificationName:TKDBSyncDidSucceedNotification object:nil userInfo:nil];
                         return [BFTask taskWithResult:nil];
                     }
                 }];
@@ -652,8 +809,8 @@
     return [[BFTask taskWithResult:nil] continueWithBlock:^id(BFTask *task) {
         
         TKParseServerSyncManager *manager = [[TKParseServerSyncManager alloc] init];
-        
-        return [manager downloadUpdatedObjectsAsyncForEntity:@"Gradetype"];
+            
+        return [manager countOfObjectsForEntity:@"Gradetype"];
     }];
 
 }

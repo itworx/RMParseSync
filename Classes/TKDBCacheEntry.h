@@ -76,6 +76,13 @@ typedef enum : NSUInteger {
  */
 @property (nonatomic, strong) NSMutableSet *tempChangedFields;
 
+/**
+ * The Object's last modification date.
+ *
+ *  @discussion To handle Update-Delete conflicts, we need to know the deletion date to compare it with the update date.
+ */
+@property (nonatomic, strong) NSDate *lastModificationDate;
+
 - (id) initWithType:(TKDBCacheEntryType)type;
 
 @end

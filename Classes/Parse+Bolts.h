@@ -34,6 +34,8 @@
 
 - (BFTask *)tk_findObjectsAsync;
 
+- (BFTask *)tk_countOfObjectsAsync;
+
 @end
 
 @interface PFFile (Bolts)

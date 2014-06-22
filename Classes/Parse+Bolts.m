@@ -150,6 +150,21 @@
     return find.task;
 }
 
+- (BFTask *)tk_countOfObjectsAsync {
+    BFTaskCompletionSource *countTask = [BFTaskCompletionSource taskCompletionSource];
+    
+    [self countObjectsInBackgroundWithBlock:^(int number, NSError *error) {
+        if (error) {
+            [countTask setError:error];
+        }
+        else {
+            [countTask setResult:@(number)];
+        }
+    }];
+    
+    return countTask.task;
+}
+
 @end
 
 @implementation PFFile (Bolts)

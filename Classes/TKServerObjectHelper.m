@@ -22,7 +22,7 @@
         managedObject =[NSEntityDescription insertNewObjectForEntityForName:object.entityName inManagedObjectContext:weakSyncContext];
     }];
 
-    [managedObject setValue:object.uniqueObjectID forKeyPath:kTKDBUniqueIDField];
+    [managedObject setValue:object.uniqueObjectID forKey:kTKDBUniqueIDField];
     [managedObject setValue:object.serverObjectID forKey:kTKDBServerIDField];
     [managedObject setValue:object.creationDate forKey:kTKDBCreatedDateField];
     [managedObject setValue:object.lastModificationDate forKey:kTKDBUpdatedDateField];
@@ -47,18 +47,29 @@
             }
             else {
                 NSManagedObject *relatedManagedObject = [[TKDB defaultDB].syncContext objectWithURI:[NSURL URLWithString:[[TKDBCacheManager sharedManager] localObjectURLForUniqueObjectID:relatedServerObject.uniqueObjectID]]];
-                [managedObject setValue:relatedManagedObject forKey:key];
+                if (relatedManagedObject) {
+                    // this would happen with Parse only relations
+                    [managedObject setValue:relatedManagedObject forKey:key];
+                }
             }
         }
         else if ([serverObject.relatedObjects[key] isKindOfClass:[NSArray class]]) {
             NSMutableSet *relatedObjects = [NSMutableSet set];
+            NSArray *relatedObjectsArray = serverObject.relatedObjects[key];
+            if (relatedObjectsArray.count == 0) {
+                // all objects are deleted
+                [managedObject setValue:relatedObjects forKey:key];
+                continue;
+            }
             for (TKServerObject *relatedServerObject in serverObject.relatedObjects[key]) {
                 if (relatedServerObject.isDeleted) {
                     continue;
                 }
                 NSManagedObject *relatedManagedObject = [[TKDB defaultDB].syncContext objectWithURI:[NSURL URLWithString:[[TKDBCacheManager sharedManager] localObjectURLForUniqueObjectID:relatedServerObject.uniqueObjectID]]];
-                [relatedObjects addObject:relatedManagedObject];
-                [managedObject setValue:relatedObjects forKey:key];
+                if (relatedManagedObject) {
+                    [relatedObjects addObject:relatedManagedObject];
+                    [managedObject setValue:relatedObjects forKey:key];
+                }
             }
         }
         else if ([serverObject.relatedObjects[key] isEqual:[NSNull null]]) {
@@ -92,6 +103,7 @@
         serverObject.serverObjectID = entry.serverObjectID;
         serverObject.uniqueObjectID = entry.uniqueObjectID;
         serverObject.entityName = entry.entity;
+        serverObject.lastModificationDate = entry.lastModificationDate;
         serverObject.isDeleted = YES;
         [updatedObjects addObject:serverObject];
     }
@@ -168,18 +180,34 @@
     for (TKServerObject *serverObject in serverObjects) {
         NSManagedObject *object = [[TKDB defaultDB].syncContext objectWithURI:[NSURL URLWithString:[[TKDBCacheManager sharedManager] localObjectURLForUniqueObjectID:serverObject.uniqueObjectID]]];
         
-        if (serverObject.isDeleted) {
-            [[TKDB defaultDB].syncContext deleteObject:object];
-        }
-        else {
-            for (NSString *key in serverObject.attributeValues) {
-                if ([key isEqualToString:@"ACL"]) {
-                    continue;
-                }
-                [object setValue:serverObject.attributeValues[key] forKey:key];
+        if (object == nil) {
+            // check serverObject
+            if (serverObject.isDeleted) {
+                // do nothing
             }
-            
-            [TKServerObjectHelper wireRelationshipsForManagedObject:object withServerObject:serverObject];
+            else {
+                // check for the lastModifiedDate
+                // this means that this object was deleted from local then updated on another
+                // device.
+                // we will treat it as a new insertion
+                [self insertServerObjectsInLocalDatabase:@[serverObject]];
+            }
+        }
+        else
+        {
+            if (serverObject.isDeleted) {
+                [[TKDB defaultDB].syncContext deleteObject:object];
+            }
+            else {
+                for (NSString *key in serverObject.attributeValues) {
+                    if ([key isEqualToString:@"ACL"]) {
+                        continue;
+                    }
+                    [object setValue:serverObject.attributeValues[key] forKey:key];
+                }
+                
+                [TKServerObjectHelper wireRelationshipsForManagedObject:object withServerObject:serverObject];
+            }
         }
     }
 }
@@ -194,20 +222,47 @@
         newerObject = conflictPair.localObject;
     }
     
-    TKServerObject *outputObject = [[TKServerObject alloc] initWithUniqueID:conflictPair.localObject.uniqueObjectID];
-    outputObject.entityName = conflictPair.localObject.entityName;
-    outputObject.creationDate = conflictPair.localObject.creationDate;
-    outputObject.serverObjectID = conflictPair.serverObject.serverObjectID;
+    TKServerObject *outputObject = [[TKServerObject alloc] initWithUniqueID:newerObject.uniqueObjectID];
+    outputObject.entityName = newerObject.entityName;
+    outputObject.creationDate = newerObject.creationDate;
+    outputObject.serverObjectID = newerObject.serverObjectID;
     outputObject.localObjectIDURL = conflictPair.localObject.localObjectIDURL;
     outputObject.lastModificationDate = [NSDate date];
     
-    NSMutableDictionary *dictAttributes = [NSMutableDictionary dictionary];
+    // to handle Update Delete conflicts
+    outputObject.isDeleted = newerObject.isDeleted;
     
-    for (NSString *key in [conflictPair.localObject.attributeValues allKeys]) {
+    if (conflictPair.localObject.isDeleted || conflictPair.serverObject.isDeleted) {
+        // if one of them is deleted, then newerObject wins, no need to check for every key 
+        outputObject.attributeValues = newerObject.attributeValues;
+        outputObject.relatedObjects = newerObject.relatedObjects;
+        
+        conflictPair.outputObject = outputObject;
+        conflictPair.resolutionType = TKDBMergeBothUpdated;
+        return;
+    }
+    
+    NSMutableDictionary *dictAttributes = [NSMutableDictionary dictionary];
+    NSArray *localKeys = [conflictPair.localObject.attributeValues allKeys];
+    NSArray *serverKeys = [conflictPair.serverObject.attributeValues allKeys];
+    
+    NSSet *allKeys = [[NSSet setWithArray:localKeys] setByAddingObjectsFromArray:serverKeys];
+    
+    for (NSString *key in allKeys) {
         
         id localValue = [conflictPair.localObject.attributeValues valueForKey:key];
         id serverValue = [conflictPair.serverObject.attributeValues valueForKey:key];
         id shadowValue = [conflictPair.shadowObject.attributeValues valueForKey:key];
+        
+        if (!localValue) {
+            localValue = @"";
+        }
+        if (!serverValue) {
+            serverValue = @"";
+        }
+        if (!shadowValue) {
+            shadowValue = @"";
+        }
         
         BOOL localChanged = ![localValue isEqual:shadowValue];
         BOOL serverChanged = ![serverValue isEqual:shadowValue];
@@ -237,6 +292,9 @@
         
         
         if ([localValue isKindOfClass:[NSArray class]]) {
+            if (shadowValue == nil) {
+                shadowValue = [NSArray array];
+            }
             NSSet *localSet = [NSSet setWithArray:localValue];
             NSSet *serverSet = [NSSet setWithArray:serverValue];
             NSSet *shadowSet = [NSSet setWithArray:shadowValue];

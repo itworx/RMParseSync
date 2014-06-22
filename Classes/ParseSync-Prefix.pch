@@ -10,5 +10,5 @@
 #import <Parse/Parse.h>
 #import "NSManagedObjectContext+Sync.h"
 #import "NSManagedObject+Sync.h"
-#import "TKDB.h"
+#import "TKDB+Multiple.h"
 #endif
