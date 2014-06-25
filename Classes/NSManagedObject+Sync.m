@@ -56,20 +56,21 @@
 #pragma mark Dictionary conversion methods
 
 - (NSDictionary*) attributeDictionary {
-    NSArray* attributes = [[[self entity] attributesByName] allKeys];
+    NSDictionary *attributes = [[self entity] attributesByName];
+    
     NSMutableDictionary* dict = [NSMutableDictionary dictionaryWithCapacity:
                                  [attributes count] + 1];
     
-    for (NSString* attr in attributes) {
-        if ([attr isEqualToString:kTKDBServerIDField] || [attr isEqualToString:kTKDBUniqueIDField] || [attr isEqualToString:kTKDBCreatedDateField] ||
-            [attr isEqualToString:kTKDBIsDeletedField]) {
+    for (NSString* attributeName in attributes) {
+        if ([attributeName isEqualToString:kTKDBServerIDField] || [attributeName isEqualToString:kTKDBUniqueIDField] || [attributeName isEqualToString:kTKDBCreatedDateField] ||
+            [attributeName isEqualToString:kTKDBIsDeletedField]) {
             continue;
         }
-        
-        NSObject* value = [self valueForKey:attr];
+
+        NSObject* value = [self valueForKey:attributeName];
         
         if (value != nil) {
-            [dict setObject:value forKey:attr];
+            [dict setObject:value forKey:attributeName];
 //            if ([value isKindOfClass:[NSDate class]]) {
 //                NSTimeInterval date = [(NSDate*)value timeIntervalSinceReferenceDate];
 //                NSString *dateAttr = [NSString stringWithFormat:@"%@%@", DATE_ATTR_PREFIX, attr];
@@ -81,6 +82,22 @@
     }
     
     return dict;
+}
+
+- (NSDictionary *)binaryFields {
+    NSArray *allKeys = [[[self entity] attributesByName] allKeys];
+    NSArray *binaryKeys = [allKeys filteredArrayUsingPredicate:[NSPredicate predicateWithFormat:@"SELF CONTAINS %@", kTKDBBinaryFieldKeySuffix]];
+    
+    NSMutableDictionary *dictBinaryKeys = [NSMutableDictionary dictionaryWithCapacity:binaryKeys.count];
+    
+    for (NSString* attributeName in binaryKeys) {
+        NSString *path = [self valueForKey:attributeName];
+        if (path) {
+            dictBinaryKeys[attributeName] = path;
+        }
+    }
+    
+    return dictBinaryKeys;
 }
 
 - (NSDictionary*) toOneRelationshipDictionary {
@@ -176,6 +193,7 @@
     serverObject.localObjectIDURL = [[[self objectID] URIRepresentation] absoluteString];
     serverObject.isDeleted = NO;
     serverObject.attributeValues = [self attributeDictionary];
+    serverObject.binaryKeysFields = [self binaryFields];
     serverObject.creationDate = [self tk_creationDate];
     serverObject.lastModificationDate = [self tk_lastModificationDate];
     NSMutableDictionary *dictRelationships = [NSMutableDictionary dictionary];

@@ -13,16 +13,23 @@
 #import "Parse+Bolts.h"
 #import "NSManagedObjectContext+Sync.h"
 
+@interface TKParseServerSyncManager ()
+/**
+ *  A dictionary of dictionaries. holds the files of each server object
+ */
+@property (nonatomic, strong) NSMutableDictionary *sessionFiles;
+
+@end
 
 @implementation TKParseServerSyncManager
+
+- (NSString *)homeDirectory {
+    return NSHomeDirectory();
+}
 
 - (TKServerObject*) serverObjectBasicInfoForParseObject:(PFObject*)parseObject {
     TKServerObject *serverObject = [[TKServerObject alloc] init];
     serverObject.entityName = parseObject.parseClassName;
-    NSEntityDescription *entity = [[TKDB defaultDB].rootContext.persistentStoreCoordinator.managedObjectModel entitiesByName][serverObject.entityName];
-    Class managedObjectClass = NSClassFromString(entity.managedObjectClassName);
-    serverObject.primaryKeyFields = [managedObjectClass primaryKeyFields];
-//    serverObject.entityClass = entity.managedObjectClassName;
     serverObject.uniqueObjectID = [parseObject valueForKey:kTKDBUniqueIDField];
     serverObject.serverObjectID = parseObject.objectId;
     serverObject.creationDate = parseObject.createdAt;
@@ -62,6 +69,8 @@
         TKServerObject *serverObject = [self serverObjectBasicInfoForParseObject:parseObject];
         
         NSMutableDictionary *dictAttributes = [NSMutableDictionary dictionary];
+        NSMutableDictionary *dictBinaryAttributes = [NSMutableDictionary dictionary];
+        NSMutableDictionary *dictBinaryKeysAttributes = [NSMutableDictionary dictionary];
         NSMutableDictionary *relatedObjects = [NSMutableDictionary dictionary];
         
         NSMutableArray *tasks = @[].mutableCopy;
@@ -72,10 +81,10 @@
             }
             
             BFTaskCompletionSource *subTask = [BFTaskCompletionSource taskCompletionSource];
-            
-            if ([[parseObject valueForKey:key] isKindOfClass:[PFObject class]]) {
+            id value = [parseObject valueForKey:key];
+            if ([value isKindOfClass:[PFObject class]]) {
 
-                PFObject *relatedObject = [parseObject valueForKey:key];
+                PFObject *relatedObject = value;
                 
                 [[relatedObject tk_refreshAsync] continueWithBlock:^id(BFTask *task) {
                     if (task.isCancelled) {
@@ -99,9 +108,9 @@
                     return nil;
                 }];
             }
-            else if ([[parseObject valueForKey:key] isKindOfClass:[PFRelation class]]) {
+            else if ([value isKindOfClass:[PFRelation class]]) {
                 
-                PFRelation *relation = [parseObject relationForKey:key];
+                PFRelation *relation = value;
                 // get related objects using [relation query]
                 PFQuery *query = [relation query];
                 
@@ -132,9 +141,42 @@
                     return nil;
                 }];
             }
+            else if ([value isKindOfClass:[PFFile class]]) {
+                PFFile *file = value;
+                // save the file if it doesn't exist
+                // get the path
+                [[file tk_getDataAsync] continueWithBlock:^id(BFTask *task) {
+                    if (task.result) {
+                        NSString *fieldKey = [key stringByAppendingString:kTKDBBinaryFieldKeySuffix];
+                        NSString *relativePath = parseObject[fieldKey];
+                        if (relativePath.length) {
+                            NSString *path = [NSHomeDirectory() stringByAppendingPathComponent:relativePath];
+                            BOOL fileExists = [[NSFileManager defaultManager] fileExistsAtPath:path];
+                            if (fileExists) {
+                                // remove
+                                [[NSFileManager defaultManager] removeItemAtPath:path error:nil];
+                            }
+                            // save the new file
+                            NSData *data = task.result;
+                            [data writeToFile:path atomically:YES];
+                        }
+                        
+                        [subTask setResult:value];
+                    }
+                    else {
+                        [subTask setError:task.error];
+                    }
+
+                    return nil;
+                }];
+                
+                dictBinaryAttributes[key] = value;
+            }
             else {
-                id value = [parseObject valueForKey:key];
                 [dictAttributes setValue:value forKey:key];
+                if ([key hasSuffix:kTKDBBinaryFieldKeySuffix]) {
+                    dictBinaryKeysAttributes[key] = value;
+                }
                 [subTask setResult:value];
             }
             [tasks addObject:subTask.task];
@@ -147,6 +189,7 @@
             else {
                 serverObject.attributeValues = dictAttributes;
                 serverObject.relatedObjects = relatedObjects;
+                serverObject.binaryKeysFields = dictBinaryKeysAttributes;
                 
                 return [BFTask taskWithResult:serverObject];
             }
@@ -204,115 +247,158 @@
 }
 
 - (BFTask *)uploadInsertedObjectsAsync:(NSArray *)serverObjects {
-    BFTaskCompletionSource *task = [BFTaskCompletionSource taskCompletionSource];
     
     if ([serverObjects count] == 0) {
-        [task setResult:@[]];
+        return [BFTask taskWithResult:@[]];
     }
     else {
-        NSMutableDictionary __block *dictServerObjects = [NSMutableDictionary dictionary];
-        NSMutableArray __block *arrayParseObjects = [NSMutableArray array];
-        NSMutableDictionary __block *dictParseObjects = [NSMutableDictionary dictionary];
-        
-        for (TKServerObject *serverObject in serverObjects) {
-            // Put the object in the dictionary to be later retrieved for setting relationships.
-            [dictServerObjects setObject:serverObject forKey:serverObject.uniqueObjectID];
+        return [[BFTask taskWithResult:nil] continueWithBlock:^id(BFTask *task) {
+            NSMutableDictionary __block *dictServerObjects = [NSMutableDictionary dictionary];
+            NSMutableArray __block *arrayParseObjects = [NSMutableArray array];
+            NSMutableDictionary __block *dictParseObjects = [NSMutableDictionary dictionary];
             
-            // Create Parse object.
-            PFObject *parseObject = [self newParseObjectBasicInfoForServerObject:serverObject];
-            [arrayParseObjects addObject:parseObject];
-            dictParseObjects[serverObject.uniqueObjectID] = parseObject;
+            NSMutableArray __block *arrayParseFiles = [NSMutableArray array];
+            NSMutableDictionary __block *dictParseFiles = [NSMutableDictionary dictionary];
             
-            if ([serverObject.entityName isEqualToString:@"AccessCode"]) {
-                // create a new PFRole for student and parent
-                NSString *parentRoleName = serverObject.attributeValues[@"parentRoleName"];
-                PFRole *parentRole = [PFRole roleWithName:parentRoleName];
-                [parseObject setValue:parentRole forKey:@"parentRole"];
+            self.sessionFiles = [NSMutableDictionary dictionaryWithCapacity:serverObjects.count];
+            NSMutableDictionary __block *session = self.sessionFiles;
+            
+            for (TKServerObject *serverObject in serverObjects) {
+                // Put the object in the dictionary to be later retrieved for setting relationships.
+                [dictServerObjects setObject:serverObject forKey:serverObject.uniqueObjectID];
                 
-                NSString *studentRoleName = serverObject.attributeValues[@"studentRoleName"];
-                PFRole *studentRole = [PFRole roleWithName:studentRoleName];
-                [parseObject setValue:studentRole forKey:@"studentRole"];
-            }
-            else if ([serverObject.entityName isEqualToString:@"Student"]) {
+                // Create Parse object.
+                PFObject *parseObject = [self newParseObjectBasicInfoForServerObject:serverObject];
                 
-                [self setACLForParseObject:parseObject withStudentServerObject:serverObject];
-            }
-            else {
-                // check for student related data
-                id studentVal = [serverObject.relatedObjects valueForKey:@"student"];
-                if (!studentVal) {
-                    studentVal = [serverObject.relatedObjects valueForKey:@"students"];
-                }
-                if (studentVal) {
-                    // has a student relation
-                    // get that student from db
-                    // check the AccessCodes table
-                    if ([studentVal isKindOfClass:[TKServerObject class]]) {
-                        // to-one relation
-                        [self setACLForParseObject:parseObject withStudentServerObject:studentVal];
+                if ([serverObject.binaryKeysFields count]) {
+                    // get binary fields
+                    NSMutableDictionary *objectFiles = [NSMutableDictionary dictionaryWithCapacity:serverObject.binaryKeysFields.count];
+                    for (NSString *key in serverObject.binaryKeysFields) {
+                        // get the file
+                        NSString *relativePath = serverObject.binaryKeysFields[key];
+                        NSString *path = [NSHomeDirectory() stringByAppendingPathComponent:relativePath];
+                        PFFile *file = [PFFile fileWithName:[relativePath lastPathComponent] contentsAtPath:path];
+                        objectFiles[key] = file;
+//                        [serverObject.binaryValues setObject:file forKey:key];
+                        [arrayParseFiles addObject:file];
+                        dictParseFiles[serverObject.uniqueObjectID] = file;
                     }
-                    else if ([studentVal isKindOfClass:[NSArray class]]) {
-                        // to-many relation
-                        NSArray *students = (NSArray *)studentVal;
-                        for (TKServerObject *studentServerObject in students) {
-                            [self setACLForParseObject:parseObject withStudentServerObject:studentServerObject];
+                    session[serverObject.uniqueObjectID] = objectFiles;
+                }
+                
+                [arrayParseObjects addObject:parseObject];
+                dictParseObjects[serverObject.uniqueObjectID] = parseObject;
+                
+                /*
+                if ([serverObject.entityName isEqualToString:@"AccessCode"]) {
+                    // create a new PFRole for student and parent
+                    NSString *parentRoleName = serverObject.attributeValues[@"parentRoleName"];
+                    PFRole *parentRole = [PFRole roleWithName:parentRoleName];
+                    [parseObject setValue:parentRole forKey:@"parentRole"];
+                    
+                    NSString *studentRoleName = serverObject.attributeValues[@"studentRoleName"];
+                    PFRole *studentRole = [PFRole roleWithName:studentRoleName];
+                    [parseObject setValue:studentRole forKey:@"studentRole"];
+                }
+                else if ([serverObject.entityName isEqualToString:@"Student"]) {
+                    
+                    [self setACLForParseObject:parseObject withStudentServerObject:serverObject];
+                }
+                else {
+                    // check for student related data
+                    id studentVal = [serverObject.relatedObjects valueForKey:@"student"];
+                    if (!studentVal) {
+                        studentVal = [serverObject.relatedObjects valueForKey:@"students"];
+                    }
+                    if (studentVal) {
+                        // has a student relation
+                        // get that student from db
+                        // check the AccessCodes table
+                        if ([studentVal isKindOfClass:[TKServerObject class]]) {
+                            // to-one relation
+                            [self setACLForParseObject:parseObject withStudentServerObject:studentVal];
+                        }
+                        else if ([studentVal isKindOfClass:[NSArray class]]) {
+                            // to-many relation
+                            NSArray *students = (NSArray *)studentVal;
+                            for (TKServerObject *studentServerObject in students) {
+                                [self setACLForParseObject:parseObject withStudentServerObject:studentServerObject];
+                            }
                         }
                     }
                 }
+                */
             }
-        }
-        
-        for (TKServerObject *serverObject in serverObjects) {
-            PFObject *parseObj = dictParseObjects[serverObject.uniqueObjectID];
-            
-            // check for attendancetype/ behaviorType/GradeType/GradableItem
-            if ([serverObject.entityName isEqualToString:@"Attendancetype"]) {
-                // check if it has attendances
-                NSArray *attendances = serverObject.relatedObjects[@"attendances"];
-                for (TKServerObject *attend in attendances) {
-                    NSManagedObject *attendance = [[TKDB defaultDB].syncContext objectWithURI:[NSURL URLWithString:attend.localObjectIDURL]];
-                    NSManagedObject *student = [attendance valueForKey:@"student"];
-                    [self setACLForParseObject:parseObj withStudent:student];
-                }
-            }
-            else if ([serverObject.entityName isEqualToString:@"Behaviortype"]) {
-                // check if it has attendances
-                NSArray *behaviors = serverObject.relatedObjects[@"behaviors"];
-                for (TKServerObject *behavior in behaviors) {
-                    NSManagedObject *behaviorObj = [[TKDB defaultDB].syncContext objectWithURI:[NSURL URLWithString:behavior.localObjectIDURL]];
-                    NSManagedObject *student = [behaviorObj valueForKey:@"student"];
-                    [self setACLForParseObject:parseObj withStudent:student];
-                }
-            }
-            else if ([serverObject.entityName isEqualToString:@"Gradableitem"]) {
-                // search across the grades, get student, add
-                NSArray *grades = serverObject.relatedObjects[@"grades"];
-                for (TKServerObject *grade in grades) {
-                    NSManagedObject *gradeObject = [[TKDB defaultDB].syncContext objectWithURI:[NSURL URLWithString:grade.localObjectIDURL]];
-                    NSManagedObject *student = [gradeObject valueForKey:@"student"];
-                    [self setACLForParseObject:parseObj withStudent:student];
-                }
-            }
-        }
-        
-        [PFObject saveAllInBackground:arrayParseObjects block:^(BOOL succeeded, NSError *error) {
-            if (error) {
-                [task setError:error];
-            }
-            else {
-                for (PFObject *parseObject in arrayParseObjects) {
-                    NSString *uniqueID = [parseObject valueForKey:kTKDBUniqueIDField];
-                    TKServerObject *serverObject = (TKServerObject *)dictServerObjects[uniqueID];
-                    serverObject.serverObjectID = [parseObject objectId];
-                    [[TKDBCacheManager sharedManager] mapServerObjectWithID:serverObject.serverObjectID toUniqueObjectWithID:serverObject.uniqueObjectID];
-                }
+            /*
+            for (TKServerObject *serverObject in serverObjects) {
+                PFObject *parseObj = dictParseObjects[serverObject.uniqueObjectID];
                 
-                [task setResult:[dictServerObjects allValues]];
+                // check for attendancetype/ behaviorType/GradeType/GradableItem
+                if ([serverObject.entityName isEqualToString:@"Attendancetype"]) {
+                    // check if it has attendances
+                    NSArray *attendances = serverObject.relatedObjects[@"attendances"];
+                    for (TKServerObject *attend in attendances) {
+                        NSManagedObject *attendance = [[TKDB defaultDB].syncContext objectWithURI:[NSURL URLWithString:attend.localObjectIDURL]];
+                        NSManagedObject *student = [attendance valueForKey:@"student"];
+                        [self setACLForParseObject:parseObj withStudent:student];
+                    }
+                }
+                else if ([serverObject.entityName isEqualToString:@"Behaviortype"]) {
+                    // check if it has attendances
+                    NSArray *behaviors = serverObject.relatedObjects[@"behaviors"];
+                    for (TKServerObject *behavior in behaviors) {
+                        NSManagedObject *behaviorObj = [[TKDB defaultDB].syncContext objectWithURI:[NSURL URLWithString:behavior.localObjectIDURL]];
+                        NSManagedObject *student = [behaviorObj valueForKey:@"student"];
+                        [self setACLForParseObject:parseObj withStudent:student];
+                    }
+                }
+                else if ([serverObject.entityName isEqualToString:@"Gradableitem"]) {
+                    // search across the grades, get student, add
+                    NSArray *grades = serverObject.relatedObjects[@"grades"];
+                    for (TKServerObject *grade in grades) {
+                        NSManagedObject *gradeObject = [[TKDB defaultDB].syncContext objectWithURI:[NSURL URLWithString:grade.localObjectIDURL]];
+                        NSManagedObject *student = [gradeObject valueForKey:@"student"];
+                        [self setACLForParseObject:parseObj withStudent:student];
+                    }
+                }
             }
+            */
+            return [[PFObject tk_saveAllAsync:arrayParseObjects] continueWithBlock:^id(BFTask *task) {
+                if (task.error) {
+                    return [BFTask taskWithError:task.error];
+                }
+                else {
+                    if ([arrayParseFiles count]) {
+                        // upload files async
+                        NSMutableArray *filesTasks = [NSMutableArray arrayWithCapacity:arrayParseFiles.count];
+                        for (NSString *key in dictParseFiles) {
+                            PFFile *file = dictParseFiles[key];
+                            [filesTasks addObject:[file tk_saveAsync]];
+                        }
+                        
+                        return [[BFTask taskForCompletionOfAllTasks:filesTasks] continueWithBlock:^id(BFTask *task) {
+                            for (PFObject *parseObject in arrayParseObjects) {
+                                NSString *uniqueID = [parseObject valueForKey:kTKDBUniqueIDField];
+                                TKServerObject *serverObject = (TKServerObject *)dictServerObjects[uniqueID];
+                                serverObject.serverObjectID = [parseObject objectId];
+                                [[TKDBCacheManager sharedManager] mapServerObjectWithID:serverObject.serverObjectID toUniqueObjectWithID:serverObject.uniqueObjectID];
+                            }
+                            return [BFTask taskWithResult:[dictServerObjects allValues]];
+                        }];
+                    }
+                    else {
+                        for (PFObject *parseObject in arrayParseObjects) {
+                            NSString *uniqueID = [parseObject valueForKey:kTKDBUniqueIDField];
+                            TKServerObject *serverObject = (TKServerObject *)dictServerObjects[uniqueID];
+                            serverObject.serverObjectID = [parseObject objectId];
+                            [[TKDBCacheManager sharedManager] mapServerObjectWithID:serverObject.serverObjectID toUniqueObjectWithID:serverObject.uniqueObjectID];
+                        }
+                        return [BFTask taskWithResult:[dictServerObjects allValues]];
+                    }
+                }
+            }];
         }];
     }
-    
-    return task.task;
 }
 
 - (void)setACLForParseObject:(PFObject *)parseObject withStudentServerObject:(TKServerObject *)serverObject {
@@ -406,8 +492,40 @@
             
             [[parseObj tk_fetchIfNeededAsync] continueWithSuccessBlock:^id(BFTask *task) {
                 PFObject *parseObject = task.result;
+                NSDictionary *serverObjectFiles = self.sessionFiles[serverObject.uniqueObjectID];
+                if ([serverObject.binaryKeysFields count]) {
+                    // get binary fields
+                    for (NSString *key in serverObject.binaryKeysFields) {
+                        // get the file
+                        PFFile *file = serverObjectFiles[key];
+                        NSString *binaryField = [key stringByReplacingCharactersInRange:[key rangeOfString:kTKDBBinaryFieldKeySuffix options:NSBackwardsSearch] withString:@""];
+                        if (!file) {
+                            // check for current file
+                            file = parseObject[binaryField];
+                            NSString *filename = [serverObject.binaryKeysFields[key] lastPathComponent];
+                            if ([file.name hasSuffix:filename]) {
+                                // same file no need to upload
+                            }
+                            else {
+                                // need to upload the new file.
+                                NSString *relativePath = serverObject.binaryKeysFields[key];
+                                NSString *path = [NSHomeDirectory() stringByAppendingPathComponent:relativePath];
+                                file = [PFFile fileWithName:filename.lastPathComponent contentsAtPath:path];
+                                [[file tk_saveAsync] continueWithBlock:^id(BFTask *task) {
+                                    parseObject[binaryField] = file;
+                                    [parseObject tk_saveAsync];
+                                    return nil;
+                                }];
+                            }
+                        }
+                        else {
+                            // new file assign to barse
+                            parseObject[binaryField] = file;
+                        }
+                    }
+                }
                 
-                
+                /*
                 // check for attendancetype/ behaviorType/GradeType/GradableItem
                 if ([serverObject.entityName isEqualToString:@"Attendancetype"]) {
                     // check if it has attendances
@@ -436,7 +554,7 @@
                         [self setACLForParseObject:parseObj withStudent:student];
                     }
                 }
-                
+                */
                 
                 // enumerate and get the related object(s)
                 

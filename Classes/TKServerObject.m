@@ -19,6 +19,7 @@
 #define kIsDeleted          @"IsDeleted"
 #define kIsOriginal         @"IsOriginal"
 #define kRelatedObjects     @"RelatedObjects"
+#define kBinaryFields       @"BinaryFields"
 
 @implementation TKServerObject
 
@@ -54,6 +55,7 @@
         self.lastModificationDate = [decoder decodeObjectForKey:kLastModDate];
         self.isDeleted = [decoder decodeBoolForKey:kIsDeleted];
         self.isOriginal = [decoder decodeBoolForKey:kIsOriginal];
+        self.binaryKeysFields = [decoder decodeObjectForKey:kBinaryFields];
     }
     return self;
 }
@@ -70,6 +72,7 @@
     [encoder encodeObject:self.lastModificationDate forKey:kLastModDate];
     [encoder encodeBool:self.isDeleted forKey:kIsDeleted];
     [encoder encodeBool:self.isOriginal forKey:kIsOriginal];
+    [encoder encodeObject:self.binaryKeysFields forKey:kBinaryFields];
 }
 
 - (BOOL) isEqual:(id)object {
@@ -85,7 +88,7 @@
 }
 
 - (NSString*) description {
-    return [NSString stringWithFormat:@"%@,%@,%@\n%@", self.entityName, self.uniqueObjectID, self.serverObjectID, self.attributeValues];
+    return [NSString stringWithFormat:@"%@,%@,%@\n%@\n%@", self.entityName, self.uniqueObjectID, self.serverObjectID, self.attributeValues, self.binaryKeysFields];
 }
 
 @end

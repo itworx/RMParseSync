@@ -33,6 +33,10 @@
         dictCacheDeletes = [NSMutableDictionary dictionary];
         dictUniqueIDtoLocal = [NSMutableDictionary dictionary];
         dictUniqueIDtoServer = [NSMutableDictionary dictionary];
+        
+        self.dictCacheFilename =  @"dbcache.plist";
+        self.dictLocalMappingFilename =  @"dblocalmapping.plist";
+        self.dictServerMappingFilename =  @"dbservermapping.plist";
     }
     return self;
 }
@@ -52,10 +56,13 @@
     NSMutableDictionary __weak *weakInserts = dictCacheInserts;
     NSMutableDictionary __weak *weakUpdates = dictCacheUpdates;
     NSMutableDictionary __weak *weakDeletes = dictCacheDeletes;
+    
+    TKDBCacheManager __weak *weakself = self;
+    
     dispatch_async(dispatch_queue_create("dbcache", nil), ^{
         NSString *applicationName = [[[NSBundle mainBundle] infoDictionary] valueForKey:(NSString *)kCFBundleNameKey];
         NSString *applicationStorageDirectory = [[NSSearchPathForDirectoriesInDomains(NSApplicationSupportDirectory, NSUserDomainMask, YES) lastObject] stringByAppendingPathComponent:applicationName];
-        NSDictionary *dictCache = [NSKeyedUnarchiver unarchiveObjectWithFile:[applicationStorageDirectory stringByAppendingPathComponent:[NSString stringWithFormat:@"%i-%@", self.hash, @"dbcache.plist"]]];
+        NSDictionary *dictCache = [NSKeyedUnarchiver unarchiveObjectWithFile:[applicationStorageDirectory stringByAppendingPathComponent:weakself.dictCacheFilename]];
         [weakInserts removeAllObjects];
         [weakUpdates removeAllObjects];
         [weakDeletes removeAllObjects];
@@ -64,12 +71,12 @@
         [weakUpdates addEntriesFromDictionary:dictCache[kUpdatesDict]];
         [weakDeletes addEntriesFromDictionary:dictCache[kDeletesDict]];
         
-        NSDictionary *dictLocalMapping = [NSKeyedUnarchiver unarchiveObjectWithFile:[applicationStorageDirectory stringByAppendingPathComponent:[NSString stringWithFormat:@"%i-%@", self.hash, @"dblocalmapping.plist"]]];
+        NSDictionary *dictLocalMapping = [NSKeyedUnarchiver unarchiveObjectWithFile:[applicationStorageDirectory stringByAppendingPathComponent:weakself.dictLocalMappingFilename]];
         [dictUniqueIDtoLocal removeAllObjects];
         
         [dictUniqueIDtoLocal addEntriesFromDictionary:dictLocalMapping];
         
-        NSDictionary *dictServerMapping = [NSKeyedUnarchiver unarchiveObjectWithFile:[applicationStorageDirectory stringByAppendingPathComponent:[NSString stringWithFormat:@"%i-%@", self.hash, @"dbservermapping.plist"]]];
+        NSDictionary *dictServerMapping = [NSKeyedUnarchiver unarchiveObjectWithFile:[applicationStorageDirectory stringByAppendingPathComponent:weakself.dictServerMappingFilename]];
         [dictUniqueIDtoServer removeAllObjects];
         
         [dictUniqueIDtoServer addEntriesFromDictionary:dictServerMapping];
@@ -85,6 +92,8 @@
     NSDictionary __block *dictLocalMapping = dictUniqueIDtoLocal;
     NSDictionary __block *dictServerMapping = dictUniqueIDtoServer;
     
+    TKDBCacheManager __weak *weakself = self;
+    
     dispatch_async(dispatch_queue_create("dbcache", nil), ^{
         NSString *applicationName = [[[NSBundle mainBundle] infoDictionary] valueForKey:(NSString *)kCFBundleNameKey];
         NSString *applicationStorageDirectory = [[NSSearchPathForDirectoriesInDomains(NSApplicationSupportDirectory, NSUserDomainMask, YES) lastObject] stringByAppendingPathComponent:applicationName];
@@ -97,9 +106,9 @@
             }
         }
         
-        [NSKeyedArchiver archiveRootObject:dictCache toFile:[applicationStorageDirectory stringByAppendingPathComponent:[NSString stringWithFormat:@"%i-%@", self.hash, @"dbcache.plist"]]];
-        [NSKeyedArchiver archiveRootObject:dictLocalMapping toFile:[applicationStorageDirectory stringByAppendingPathComponent:[NSString stringWithFormat:@"%i-%@", self.hash, @"dblocalmapping.plist"]]];
-        [NSKeyedArchiver archiveRootObject:dictServerMapping toFile:[applicationStorageDirectory stringByAppendingPathComponent:[NSString stringWithFormat:@"%i-%@", self.hash, @"dbservermapping.plist"]]];
+        [NSKeyedArchiver archiveRootObject:dictCache toFile:[applicationStorageDirectory stringByAppendingPathComponent:weakself.dictCacheFilename]];
+        [NSKeyedArchiver archiveRootObject:dictLocalMapping toFile:[applicationStorageDirectory stringByAppendingPathComponent:weakself.dictLocalMappingFilename]];
+        [NSKeyedArchiver archiveRootObject:dictServerMapping toFile:[applicationStorageDirectory stringByAppendingPathComponent:weakself.dictServerMappingFilename]];
     });
 }
 

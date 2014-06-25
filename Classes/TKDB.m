@@ -236,15 +236,15 @@ NSString * const TKDBSyncFailedNotification = @"TKDBSyncFailedNotification";
 }
 
 - (NSDate*) lastSyncDate {
-    NSDate *date = [[NSUserDefaults standardUserDefaults] objectForKey:[NSString stringWithFormat:@"%i-%@", self.hash, @"lastSyncDate"]];
+    NSDate *date = [[NSUserDefaults standardUserDefaults] objectForKey:@"lastSyncDate"];
     if (!date) {
-        [[NSUserDefaults standardUserDefaults] setValue:[NSDate dateWithTimeIntervalSince1970:0] forKey:[NSString stringWithFormat:@"%i-%@", self.hash, @"lastSyncDate"]];
+        [[NSUserDefaults standardUserDefaults] setValue:[NSDate dateWithTimeIntervalSince1970:0] forKey:@"lastSyncDate"];
     }
-    return [[NSUserDefaults standardUserDefaults] objectForKey:[NSString stringWithFormat:@"%i-%@", self.hash, @"lastSyncDate"]];
+    return [[NSUserDefaults standardUserDefaults] objectForKey:@"lastSyncDate"];
 }
 
 - (void) setLastSyncDate:(NSDate*)date {
-     [[NSUserDefaults standardUserDefaults] setValue:date forKey:[NSString stringWithFormat:@"%i-%@", self.hash, @"lastSyncDate"]];
+     [[NSUserDefaults standardUserDefaults] setValue:date forKey:@"lastSyncDate"];
 }
 
 // step 1

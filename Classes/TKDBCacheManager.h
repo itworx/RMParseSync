@@ -12,6 +12,21 @@
 
 @interface TKDBCacheManager : NSObject
 
+/**
+ *  default is dbcache.plist;
+ */
+@property (nonatomic, strong) NSString *dictCacheFilename;
+
+/**
+ *  default is dblocalmapping.plist;
+ */
+@property (nonatomic, strong) NSString *dictLocalMappingFilename;
+
+/**
+ *  default is dbservermapping.plist;
+ */
+@property (nonatomic, strong) NSString *dictServerMappingFilename;
+
 + (TKDBCacheManager*) sharedManager;
 
 - (void) addCacheEntry:(TKDBCacheEntry*)entry;

@@ -169,6 +169,21 @@
 
 @implementation PFFile (Bolts)
 
+- (BFTask *)tk_saveAsync {
+    BFTaskCompletionSource *upload = [BFTaskCompletionSource taskCompletionSource];
+    
+    [self saveInBackgroundWithBlock:^(BOOL succeeded, NSError *error) {
+        if (error) {
+            [upload setError:error];
+        }
+        else {
+            [upload setResult:@(succeeded)];
+        }
+    }];
+    
+    return upload.task;
+}
+
 - (BFTask *)tk_getDataAsync {
     BFTaskCompletionSource *getData = [BFTaskCompletionSource taskCompletionSource];
     

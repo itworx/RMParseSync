@@ -15,6 +15,8 @@
 #define kTKDBCreatedDateField       @"createdDate"
 #define kTKDBUpdatedDateField       @"lastModifiedDate"
 
+#define kTKDBBinaryFieldKeySuffix   @"_BinaryPathKey" // this should be the path of the file
+
 #define kLastSyncDate @"LastSync"
 #define kEntities @[@"Classroom", @"Student", @"Behavior", @"Behaviortype"]
 

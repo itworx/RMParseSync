@@ -40,6 +40,8 @@
 
 @interface PFFile (Bolts)
 
+- (BFTask *)tk_saveAsync;
+
 - (BFTask *)tk_getDataAsync;
 
 - (BFTask *)tk_getDataAsyncWithProgressBlock:(PFProgressBlock)progressBlock;

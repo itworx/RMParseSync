@@ -11,6 +11,14 @@
 #import "RMParseSync.h"
 
 @class BFTask;
+@class TKServerSyncManager;
+
+@protocol TKServerSyncDelegate <NSObject>
+
+@optional
+- (void)serverSyncManager:(TKServerSyncManager *)syncManager willUploadObject:(NSManagedObject *)object;
+
+@end
 
 @interface TKServerSyncManager : NSObject
 

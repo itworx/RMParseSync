@@ -37,6 +37,11 @@
 @property (nonatomic, strong) NSDictionary *attributeValues;
 
 /**
+ *  The values of the object's binary fields keys.
+ */
+@property (nonatomic, strong) NSDictionary *binaryKeysFields;
+
+/**
  *  The object's last modification date.
  */
 @property (nonatomic, strong) NSDate *creationDate;
