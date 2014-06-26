@@ -20,7 +20,7 @@
 #import "DDLog.h"
 #endif
 
-int ddLogLevel = LOG_LEVEL_VERBOSE;
+int syncLogLevel = LOG_LEVEL_VERBOSE;
 
 NSString * const TKDBSyncDidSucceedNotification = @"TKDBSyncDidSucceedNotification";
 NSString * const TKDBSyncFailedNotification = @"TKDBSyncFailedNotification";
@@ -667,9 +667,9 @@ NSString * const TKDBSyncFailedNotification = @"TKDBSyncFailedNotification";
 - (BFTask *)sync {
     
     [TKSyncLogger startLogging];
-    
-    DDLogVerbose(@"Starting Sync");
-    DDLogVerbose(@"Last Sync Date: %@\n\n", self.lastSyncDate);
+
+    SYNCLogVerbose(@"Starting Sync");
+    SYNCLogVerbose(@"Last Sync Date: %@\n\n", self.lastSyncDate);
     
     CFTimeInterval SYNC_START_TIME = CACurrentMediaTime();
     
@@ -681,7 +681,7 @@ NSString * const TKDBSyncFailedNotification = @"TKDBSyncFailedNotification";
 
     CFTimeInterval __block startTime = CACurrentMediaTime();
 
-    DDLogVerbose(@"Pulling Server Changes...\n");
+    SYNCLogVerbose(@"Pulling Server Changes...\n");
     
     return [[self pullServerChanges] continueWithSuccessBlock:^id(BFTask *pullTask) {
         CFTimeInterval __block endTime = CACurrentMediaTime();
@@ -691,29 +691,29 @@ NSString * const TKDBSyncFailedNotification = @"TKDBSyncFailedNotification";
         
         NSMutableArray *arrServerObjects = pullTask.result;
 
-        DDLogVerbose(@"Pulling Server Changes took : %@ seconds\n\n", step1Time);
-        DDLogVerbose(@"Server Changes <%lu object(s)>: %@\n\n", (unsigned long)arrServerObjects.count, [NSSet setWithArray:arrServerObjects]);
+        SYNCLogVerbose(@"Pulling Server Changes took : %@ seconds\n\n", step1Time);
+        SYNCLogVerbose(@"Server Changes <%lu object(s)>: %@\n\n", (unsigned long)arrServerObjects.count, [NSSet setWithArray:arrServerObjects]);
         
         NSArray *localInsertedObjects = [TKServerObjectHelper getInsertedObjectsFromCache];
-        DDLogVerbose(@"Local new objects <%lu object(s)>: %@\n\n", (unsigned long)localInsertedObjects.count, [NSSet setWithArray:localInsertedObjects]);
+        SYNCLogVerbose(@"Local new objects <%lu object(s)>: %@\n\n", (unsigned long)localInsertedObjects.count, [NSSet setWithArray:localInsertedObjects]);
         
         NSArray *localUpdatedObjects = [TKServerObjectHelper getUpdatedObjectsFromCache];
-        DDLogVerbose(@"Local Updated/Deleted objects <%lu object(s)>: %@\n\n", (unsigned long)localUpdatedObjects.count, [NSSet setWithArray:localUpdatedObjects]);
+        SYNCLogVerbose(@"Local Updated/Deleted objects <%lu object(s)>: %@\n\n", (unsigned long)localUpdatedObjects.count, [NSSet setWithArray:localUpdatedObjects]);
         
         NSMutableSet *localUpdatesNoConflicts = [NSMutableSet set];
         NSMutableSet *serverUpdatesNoConflicts = [NSMutableSet set];
         
-        DDLogVerbose(@"Checking for Conflicts...");
+        SYNCLogVerbose(@"Checking for Conflicts...");
         
         NSArray *conflicts = [weakself detectConflictsWithServerObjects:arrServerObjects localObjects:[localUpdatedObjects arrayByAddingObjectsFromArray:localInsertedObjects] localUpdatesNoConflicts:&localUpdatesNoConflicts serverUpdatesNoConflicts:&serverUpdatesNoConflicts];
         
-        DDLogVerbose(@"Detected Conflicts <%lu object(s)>: %@\n\n", (unsigned long)conflicts.count, [NSSet setWithArray:conflicts]);
+        SYNCLogVerbose(@"Detected Conflicts <%lu object(s)>: %@\n\n", (unsigned long)conflicts.count, [NSSet setWithArray:conflicts]);
         
-        DDLogVerbose(@"Resolving Conflicts...");
+        SYNCLogVerbose(@"Resolving Conflicts...");
         
         [weakself resolveConflicts:conflicts withLocalUpdates:&localUpdatesNoConflicts andServerUpdates:&serverUpdatesNoConflicts];
         
-        DDLogVerbose(@"Changes after resolving conflicts:\nLocal Updates<%lu object(s)>:%@\nServer Updates<%lu object(s)>:%@\n\n\n\n", localUpdatesNoConflicts.count, localUpdatesNoConflicts, serverUpdatesNoConflicts.count, serverUpdatesNoConflicts);
+        SYNCLogVerbose(@"Changes after resolving conflicts:\nLocal Updates<%lu object(s)>:%@\nServer Updates<%lu object(s)>:%@\n\n\n\n", localUpdatesNoConflicts.count, localUpdatesNoConflicts, serverUpdatesNoConflicts.count, serverUpdatesNoConflicts);
         
         endTime = CACurrentMediaTime();
         NSNumber __block *step2Time = @(endTime - startTime);
@@ -721,16 +721,16 @@ NSString * const TKDBSyncFailedNotification = @"TKDBSyncFailedNotification";
         // conflict management should return all server updates
         // @param serverUpdatesNoConflicts should have all server changes with conflicts resolved.
         
-        DDLogVerbose(@"Adding server changes to Database...");
+        SYNCLogVerbose(@"Adding server changes to Database...");
         // save serverChanges
         [TKServerObjectHelper updateServerObjectsInLocalDatabase:[serverUpdatesNoConflicts allObjects]];
         
         NSSet *insertedObjects = weakself.syncContext.insertedObjects;
         NSSet *updatedObjects = weakself.syncContext.updatedObjects;
         NSSet *deletedObejcts = weakself.syncContext.deletedObjects;
-        DDLogVerbose(@"Database's Inserted objects<%lu object(s)>:%@\n\n", insertedObjects.count, insertedObjects);
-        DDLogVerbose(@"Database's Updated objects<%lu object(s)>:%@\n\n", updatedObjects.count, updatedObjects);
-        DDLogVerbose(@"Database's Deleted objects<%lu object(s)>:%@\n\n", deletedObejcts.count, deletedObejcts);
+        SYNCLogVerbose(@"Database's Inserted objects<%lu object(s)>:%@\n\n", insertedObjects.count, insertedObjects);
+        SYNCLogVerbose(@"Database's Updated objects<%lu object(s)>:%@\n\n", updatedObjects.count, updatedObjects);
+        SYNCLogVerbose(@"Database's Deleted objects<%lu object(s)>:%@\n\n", deletedObejcts.count, deletedObejcts);
         
         NSMutableSet *objectsSet = [NSMutableSet setWithSet:localUpdatesNoConflicts];
         // detect new objects
@@ -738,25 +738,25 @@ NSString * const TKDBSyncFailedNotification = @"TKDBSyncFailedNotification";
         
         [objectsSet minusSet:newObjects];
         
-        DDLogVerbose(@"Pushing local Changes...");
-        DDLogVerbose(@"Local new objects<%lu object(s)>: %@\n\n", newObjects.count, newObjects);
+        SYNCLogVerbose(@"Pushing local Changes...");
+        SYNCLogVerbose(@"Local new objects<%lu object(s)>: %@\n\n", newObjects.count, newObjects);
         startTime = CACurrentMediaTime();
         return [[weakself pushNewLocalObjects:newObjects.allObjects] continueWithSuccessBlock:^id(BFTask *task) {
             endTime = CACurrentMediaTime();
             NSNumber __block *uploadingLocalInserts = @(endTime - startTime);
             
-            DDLogVerbose(@"Pushing new objects completed in %@ seconds\n", uploadingLocalInserts);
+            SYNCLogVerbose(@"Pushing new objects completed in %@ seconds\n", uploadingLocalInserts);
             
             NSArray *newObjectsWithServerIDs = task.result;
             
-            DDLogVerbose(@"Adding server IDs to Database :%@\n\n", [NSSet setWithArray:newObjectsWithServerIDs]);
+            SYNCLogVerbose(@"Adding server IDs to Database :%@\n\n", [NSSet setWithArray:newObjectsWithServerIDs]);
             [TKServerObjectHelper updateServerIDInLocalDatabase:newObjectsWithServerIDs];
             
             // combine newObjectsWithServerIDs with localUpdates
             NSArray *allObjects = [objectsSet.allObjects arrayByAddingObjectsFromArray:newObjectsWithServerIDs];
             
-            DDLogVerbose(@"Pushing All local changes with relations...");
-            DDLogVerbose(@"Changes <%lu object(s)>: %@\n\n", allObjects.count, [NSSet setWithArray:allObjects]);
+            SYNCLogVerbose(@"Pushing All local changes with relations...");
+            SYNCLogVerbose(@"Changes <%lu object(s)>: %@\n\n", allObjects.count, [NSSet setWithArray:allObjects]);
             
             // then push local relations
             startTime = CACurrentMediaTime();
@@ -764,9 +764,9 @@ NSString * const TKDBSyncFailedNotification = @"TKDBSyncFailedNotification";
                 endTime = CACurrentMediaTime();
                 NSNumber __block *uploadingLocalChanges = @(endTime - startTime);
                 
-                DDLogVerbose(@"Pushing to server completed in %@ seconds\n\n", uploadingLocalChanges);
+                SYNCLogVerbose(@"Pushing to server completed in %@ seconds\n\n", uploadingLocalChanges);
                 
-                DDLogVerbose(@"Saving database changes...");
+                SYNCLogVerbose(@"Saving database changes...");
                 // save to Db
                 NSError __block *savingError;
                 [weakself.syncContext performBlockAndWait:^{
@@ -777,13 +777,13 @@ NSString * const TKDBSyncFailedNotification = @"TKDBSyncFailedNotification";
                 }];
                 
                 if (savingError) {
-                    DDLogError(@"Saving Failed with error: %@", savingError);
+                    SYNCLogError(@"Saving Failed with error: %@", savingError);
                     // rollback and
                     [[TKDBCacheManager sharedManager] rollbackToCheckpoint];
                     return [BFTask taskWithError:savingError];
                 }
                 else {
-                    DDLogVerbose(@"Saving Finished Successfully\n\n");
+                    SYNCLogVerbose(@"Saving Finished Successfully\n\n");
                     [weakself setLastSyncDate:[NSDate date]];
                     [[TKDBCacheManager sharedManager] clearCache];
                     [[TKDBCacheManager sharedManager] endCheckpointSuccessfully];
@@ -791,7 +791,7 @@ NSString * const TKDBSyncFailedNotification = @"TKDBSyncFailedNotification";
                 
                 CFTimeInterval SYNC_END_TIME = CACurrentMediaTime();
                 NSNumber *SYNC_TIME = @(SYNC_END_TIME - SYNC_START_TIME);
-                DDLogVerbose(@"Sync Finished in %@ seconds", SYNC_TIME);
+                SYNCLogVerbose(@"Sync Finished in %@ seconds", SYNC_TIME);
                 
                 [TKSyncLogger endLogging];
                 return [BFTask taskWithResult:@{@"Downloading server changes": step1Time, @"Resolving Conflicts" : step2Time, @"Uploading local Inserts": uploadingLocalInserts, @"Uploading local updates": uploadingLocalChanges}];
