@@ -88,7 +88,7 @@
 }
 
 - (NSString*) description {
-    return [NSString stringWithFormat:@"%@,%@,%@\n%@\n%@", self.entityName, self.uniqueObjectID, self.serverObjectID, self.attributeValues, self.binaryKeysFields];
+    return [NSString stringWithFormat:@"%@,%@,%@, Deleted:%i, %@, RelatedObjects:%@", self.entityName, self.uniqueObjectID, self.serverObjectID, self.isDeleted, self.attributeValues, self.relatedObjects];
 }
 
 @end
@@ -103,6 +103,11 @@
         self.shadowObject = shadowObject;
     }
     return self;
+}
+
+- (NSString *)description
+{
+    return [NSString stringWithFormat:@"[ServerObject: %@, LocalObject: %@, ShadowObject: %@]", self.serverObject, self.localObject, self.shadowObject];
 }
 
 @end

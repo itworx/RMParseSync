@@ -13,6 +13,7 @@
 #import <CoreData/CoreData.h>
 #import "TKServerObject.h"
 #import "TKDB.h"
+#import "TKSyncLogger.h"
 #import <Bolts/Bolts.h>
 #import <Parse/Parse.h>
 
