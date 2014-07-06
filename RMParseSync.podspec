@@ -6,7 +6,7 @@
 #
 Pod::Spec.new do |s|
   s.name             = "RMParseSync"
-  s.version          = "0.2.1"
+  s.version          = "0.3.0"
   s.summary          = "Offline support for Parse"
   s.description      = <<-DESC
                        Provides support for Full Offline Cashing for Parse sdk for iOS
