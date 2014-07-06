@@ -545,6 +545,7 @@ NSString * const TKDBSyncFailedNotification = @"TKDBSyncFailedNotification";
                                         relatedObject = _server;
                                         // remove that object from serverUpadatesNoConflicts
                                         [*serverUpdatesNoConflicts removeObject:_server];
+                                        [*localUpdatesNoConflicts removeObject:relatedObject];
                                         break;
                                     }
                                 }
@@ -565,11 +566,13 @@ NSString * const TKDBSyncFailedNotification = @"TKDBSyncFailedNotification";
                         else if ([val isKindOfClass:[TKServerObject class]]) {
                             TKServerObject *relatedObject = val;
                             // search for relatedObject in the serverObjects
+
                             for (TKServerObject *_server in serverObjects) {
                                 if ([_server.uniqueObjectID isEqualToString:relatedObject.uniqueObjectID]) {
                                     relatedObject = _server;
                                     // remove that object from serverUpadatesNoConflicts
                                     [*serverUpdatesNoConflicts removeObject:_server];
+                                    [*localUpdatesNoConflicts removeObject:relatedObject];
                                     break;
                                 }
                             }
