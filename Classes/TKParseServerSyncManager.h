@@ -8,6 +8,17 @@
 
 #import "TKServerSyncManager.h"
 
+@class TKParseServerSyncManager;
+
+@protocol TKParseSyncDelegate <NSObject>
+
+@optional
+- (void)parseSyncManager:(TKParseServerSyncManager *)manager willUploadParseObject:(PFObject *)parseObject withServerObject:(TKServerObject *)serverObject;
+
+@end
+
 @interface TKParseServerSyncManager : TKServerSyncManager
+
+@property (nonatomic, weak) id <TKParseSyncDelegate> delegate;
 
 @end

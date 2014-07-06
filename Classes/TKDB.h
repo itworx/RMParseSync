@@ -27,6 +27,7 @@ typedef void (^TKSyncSuccessBlock)(NSArray *objects);
 typedef void (^TKSyncFailureBlock)(NSArray *objects, NSError *error);
 
 @class BFTask;
+@protocol TKParseSyncDelegate;
 
 // Set the flag for a block completion handler
 #define StartBlock() __block BOOL waitingForBlock = YES
@@ -46,6 +47,8 @@ while(condition) { \
 } while(0)
 
 @interface TKDB : NSObject
+
+@property (nonatomic, weak) id <TKParseSyncDelegate> syncManagerDelegate;
 
 /**
  *  Root saving context.
@@ -77,6 +80,6 @@ while(condition) { \
 
 - (BFTask *)sync;
 
-- (BFTask *)checkServerForExistingObjects;
+- (BFTask *)checkServerForExistingObjectsForEntity:(NSString *)entityName;
 
 @end

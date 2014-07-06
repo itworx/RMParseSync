@@ -69,8 +69,8 @@
 
         NSObject* value = [self valueForKey:attributeName];
         
-        if (value != nil) {
-            [dict setObject:value forKey:attributeName];
+        if (value == nil) {
+            value = [NSNull null];
 //            if ([value isKindOfClass:[NSDate class]]) {
 //                NSTimeInterval date = [(NSDate*)value timeIntervalSinceReferenceDate];
 //                NSString *dateAttr = [NSString stringWithFormat:@"%@%@", DATE_ATTR_PREFIX, attr];
@@ -79,6 +79,7 @@
 //                [dict setObject:value forKey:attr];
 //            }
         }
+        [dict setObject:value forKey:attributeName];
     }
     
     return dict;
@@ -91,10 +92,11 @@
     NSMutableDictionary *dictBinaryKeys = [NSMutableDictionary dictionaryWithCapacity:binaryKeys.count];
     
     for (NSString* attributeName in binaryKeys) {
-        NSString *path = [self valueForKey:attributeName];
-        if (path) {
-            dictBinaryKeys[attributeName] = path;
+        id path = [self valueForKey:attributeName];
+        if (path == nil) {
+            path = [NSNull null];
         }
+        dictBinaryKeys[attributeName] = path;
     }
     
     return dictBinaryKeys;

@@ -557,7 +557,7 @@ NSString * const TKDBSyncFailedNotification = @"TKDBSyncFailedNotification";
                                     TKDBCacheEntry *entry = [self entryWithObject:localRelatedObject];
                                     TKServerObject *shadowServerObject = entry.originalObject;
                                     TKServerObject *localServerObject = [localRelatedObject toServerObject];
-                                    localServerObject.lastModificationDate = otherObject.lastModificationDate;
+                                    localServerObject.lastModificationDate = [otherObject.lastModificationDate dateByAddingTimeInterval:-10];
                                     [conflictPairs addObject:[[TKServerObjectConflictPair alloc] initWithServerObject:relatedObject localObject:localServerObject shadowObject:shadowServerObject]];
                                 }
                             }
@@ -582,7 +582,7 @@ NSString * const TKDBSyncFailedNotification = @"TKDBSyncFailedNotification";
                                 TKDBCacheEntry *entry = [self entryWithObject:localRelatedObject];
                                 TKServerObject *shadowServerObject = entry.originalObject;
                                 TKServerObject *localServerObject = [localRelatedObject toServerObject];
-                                localServerObject.lastModificationDate = otherObject.lastModificationDate;
+                                localServerObject.lastModificationDate = [otherObject.lastModificationDate dateByAddingTimeInterval:-10];
                                 [conflictPairs addObject:[[TKServerObjectConflictPair alloc] initWithServerObject:relatedObject localObject:localServerObject shadowObject:shadowServerObject]];
                             }
                         }
@@ -674,6 +674,7 @@ NSString * const TKDBSyncFailedNotification = @"TKDBSyncFailedNotification";
     CFTimeInterval SYNC_START_TIME = CACurrentMediaTime();
     
     self.manager = [[TKParseServerSyncManager alloc] init];
+    self.manager.delegate = self.syncManagerDelegate;
 
     [[TKDBCacheManager sharedManager] startCheckpoint];
     
@@ -685,7 +686,7 @@ NSString * const TKDBSyncFailedNotification = @"TKDBSyncFailedNotification";
     
     return [[self pullServerChanges] continueWithSuccessBlock:^id(BFTask *pullTask) {
         CFTimeInterval __block endTime = CACurrentMediaTime();
-        NSNumber __block *step1Time = @(endTime - startTime);
+        NSNumber __block *step1Time = @((int)(endTime - startTime));
 
         startTime = CACurrentMediaTime();
         
@@ -713,24 +714,26 @@ NSString * const TKDBSyncFailedNotification = @"TKDBSyncFailedNotification";
         
         [weakself resolveConflicts:conflicts withLocalUpdates:&localUpdatesNoConflicts andServerUpdates:&serverUpdatesNoConflicts];
         
-        SYNCLogVerbose(@"Changes after resolving conflicts:\nLocal Updates<%lu object(s)>:%@\nServer Updates<%lu object(s)>:%@\n\n\n\n", localUpdatesNoConflicts.count, localUpdatesNoConflicts, serverUpdatesNoConflicts.count, serverUpdatesNoConflicts);
+        SYNCLogVerbose(@"Changes after resolving conflicts:\nLocal Updates<%lu object(s)>:%@\nServer Updates<%lu object(s)>:%@\n\n\n\n", (unsigned long)localUpdatesNoConflicts.count, localUpdatesNoConflicts, (unsigned long)serverUpdatesNoConflicts.count, serverUpdatesNoConflicts);
         
         endTime = CACurrentMediaTime();
-        NSNumber __block *step2Time = @(endTime - startTime);
+        NSNumber __block *step2Time = @((int)(endTime - startTime));
         
         // conflict management should return all server updates
         // @param serverUpdatesNoConflicts should have all server changes with conflicts resolved.
         
         SYNCLogVerbose(@"Adding server changes to Database...");
         // save serverChanges
-        [TKServerObjectHelper updateServerObjectsInLocalDatabase:[serverUpdatesNoConflicts allObjects]];
+        NSArray *serverUpdatesArray = [serverUpdatesNoConflicts allObjects];
+        NSArray *sortedServerUpdates = [serverUpdatesArray sortedArrayUsingDescriptors:@[[NSSortDescriptor sortDescriptorWithKey:@"attributeValues.lastModifiedDate" ascending:YES]]];
+        [TKServerObjectHelper updateServerObjectsInLocalDatabase:sortedServerUpdates];
         
         NSSet *insertedObjects = weakself.syncContext.insertedObjects;
         NSSet *updatedObjects = weakself.syncContext.updatedObjects;
         NSSet *deletedObejcts = weakself.syncContext.deletedObjects;
-        SYNCLogVerbose(@"Database's Inserted objects<%lu object(s)>:%@\n\n", insertedObjects.count, insertedObjects);
-        SYNCLogVerbose(@"Database's Updated objects<%lu object(s)>:%@\n\n", updatedObjects.count, updatedObjects);
-        SYNCLogVerbose(@"Database's Deleted objects<%lu object(s)>:%@\n\n", deletedObejcts.count, deletedObejcts);
+        SYNCLogVerbose(@"Database's Inserted objects<%lu object(s)>:%@\n\n", (unsigned long)insertedObjects.count, insertedObjects);
+        SYNCLogVerbose(@"Database's Updated objects<%lu object(s)>:%@\n\n", (unsigned long)updatedObjects.count, updatedObjects);
+        SYNCLogVerbose(@"Database's Deleted objects<%lu object(s)>:%@\n\n", (unsigned long)deletedObejcts.count, deletedObejcts);
         
         NSMutableSet *objectsSet = [NSMutableSet setWithSet:localUpdatesNoConflicts];
         // detect new objects
@@ -739,11 +742,11 @@ NSString * const TKDBSyncFailedNotification = @"TKDBSyncFailedNotification";
         [objectsSet minusSet:newObjects];
         
         SYNCLogVerbose(@"Pushing local Changes...");
-        SYNCLogVerbose(@"Local new objects<%lu object(s)>: %@\n\n", newObjects.count, newObjects);
+        SYNCLogVerbose(@"Local new objects<%lu object(s)>: %@\n\n", (unsigned long)newObjects.count, newObjects);
         startTime = CACurrentMediaTime();
         return [[weakself pushNewLocalObjects:newObjects.allObjects] continueWithSuccessBlock:^id(BFTask *task) {
             endTime = CACurrentMediaTime();
-            NSNumber __block *uploadingLocalInserts = @(endTime - startTime);
+            NSNumber __block *uploadingLocalInserts = @((int)(endTime - startTime));
             
             SYNCLogVerbose(@"Pushing new objects completed in %@ seconds\n", uploadingLocalInserts);
             
@@ -756,13 +759,13 @@ NSString * const TKDBSyncFailedNotification = @"TKDBSyncFailedNotification";
             NSArray *allObjects = [objectsSet.allObjects arrayByAddingObjectsFromArray:newObjectsWithServerIDs];
             
             SYNCLogVerbose(@"Pushing All local changes with relations...");
-            SYNCLogVerbose(@"Changes <%lu object(s)>: %@\n\n", allObjects.count, [NSSet setWithArray:allObjects]);
+            SYNCLogVerbose(@"Changes <%lu object(s)>: %@\n\n", (unsigned long)allObjects.count, [NSSet setWithArray:allObjects]);
             
             // then push local relations
             startTime = CACurrentMediaTime();
             return [[weakself pushNewLocalObjectsWithRelations:allObjects] continueWithSuccessBlock:^id(BFTask *task) {
                 endTime = CACurrentMediaTime();
-                NSNumber __block *uploadingLocalChanges = @(endTime - startTime);
+                NSNumber __block *uploadingLocalChanges = @((int)(endTime - startTime));
                 
                 SYNCLogVerbose(@"Pushing to server completed in %@ seconds\n\n", uploadingLocalChanges);
                 
@@ -794,6 +797,9 @@ NSString * const TKDBSyncFailedNotification = @"TKDBSyncFailedNotification";
                 SYNCLogVerbose(@"Sync Finished in %@ seconds", SYNC_TIME);
                 
                 [TKSyncLogger endLogging];
+                
+                [[NSNotificationCenter defaultCenter] postNotificationName:TKDBSyncDidSucceedNotification object:nil userInfo:nil];
+                
                 return [BFTask taskWithResult:@{@"Downloading server changes": step1Time, @"Resolving Conflicts" : step2Time, @"Uploading local Inserts": uploadingLocalInserts, @"Uploading local updates": uploadingLocalChanges}];
             }];
         }];
@@ -864,14 +870,13 @@ NSString * const TKDBSyncFailedNotification = @"TKDBSyncFailedNotification";
     }];
 }
 
-- (BFTask *)checkServerForExistingObjects {
+- (BFTask *)checkServerForExistingObjectsForEntity:(NSString *)entityName {
     return [[BFTask taskWithResult:nil] continueWithBlock:^id(BFTask *task) {
         
         TKParseServerSyncManager *manager = [[TKParseServerSyncManager alloc] init];
-            
-        return [manager countOfObjectsForEntity:@"Gradetype"];
+        
+        return [manager countOfObjectsForEntity:entityName];
     }];
-
 }
 
 @end
