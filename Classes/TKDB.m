@@ -227,6 +227,8 @@ NSString * const TKDBSyncFailedNotification = @"TKDBSyncFailedNotification";
 }
 
 - (void) setRootContext:(NSManagedObjectContext*)rootContext {
+    [[NSNotificationCenter defaultCenter] removeObserver:self];
+    
     _rootContext = rootContext;
     
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(contextDidSave:) name:NSManagedObjectContextDidSaveNotification object:_rootContext];
@@ -242,6 +244,7 @@ NSString * const TKDBSyncFailedNotification = @"TKDBSyncFailedNotification";
     _referenceContext.mergePolicy = NSOverwriteMergePolicy;
     
     self.entities = [rootContext.persistentStoreCoordinator.managedObjectModel entitiesByName].allKeys;
+    self.lastSyncDate = [NSDate dateWithTimeIntervalSince1970:0];
 }
 
 - (NSDate*) lastSyncDate {
@@ -255,204 +258,6 @@ NSString * const TKDBSyncFailedNotification = @"TKDBSyncFailedNotification";
 - (void) setLastSyncDate:(NSDate*)date {
      [[NSUserDefaults standardUserDefaults] setValue:date forKey:@"lastSyncDate"];
 }
-
-// step 1
-- (BFTask *)downloadAllServerUpdatesWithManager:(TKParseServerSyncManager *)manager {
-    
-    return [[BFTask taskWithResult:nil] continueWithBlock:^id(BFTask *task) {
-
-        NSMutableArray __block *arrServerObjects = [NSMutableArray array];
-
-        NSMutableArray *tasks = @[].mutableCopy;
-        for (NSString *entity in self.entities) {
-            BFTaskCompletionSource *source = [BFTaskCompletionSource taskCompletionSource];
-            
-            [[manager downloadUpdatedObjectsAsyncForEntity:entity] continueWithBlock:^id(BFTask *task) {
-                if (task.isCancelled) {
-                    [source cancel];
-                }
-                else if (task.error) {
-                    [source setError:task.error];
-                }
-                else {
-                    NSArray *obejcts = task.result;
-                    [arrServerObjects addObjectsFromArray:obejcts];
-                    [source setResult:obejcts];
-                }
-                return nil;
-            }];
-            
-            [tasks addObject:source.task];
-        }
-        return [[BFTask taskForCompletionOfAllTasks:tasks] continueWithBlock:^id(BFTask *task) {
-            // this will be executed after *all* the group tasks have completed
-            if (task.error) {
-                [[TKDBCacheManager sharedManager] rollbackToCheckpoint];
-                return [BFTask taskWithError:task.error];
-            }
-            else {
-                return [BFTask taskWithResult:arrServerObjects];
-            }
-        }];
-    }];
-}
-
-// step 2
-- (BFTask *)insertServerObjects:(NSArray *)serverObjects thenUploadLocalData:(NSArray *)localInsertedObjects withManager:(TKParseServerSyncManager *)manager {
-    BFTaskCompletionSource *sourceTask = [BFTaskCompletionSource taskCompletionSource];
-    
-    // insert server objects
-    NSPredicate *predicate = [NSPredicate predicateWithFormat:@"creationDate > %@", [self lastSyncDate]];
-    NSArray *newServerObjects = [serverObjects filteredArrayUsingPredicate:predicate];
-    [TKServerObjectHelper insertServerObjectsInLocalDatabase:newServerObjects];
-    
-    // upload local objects
-    [[manager uploadInsertedObjectsAsync:localInsertedObjects] continueWithBlock:^id(BFTask *task) {
-        if (task.isCancelled) {
-            [sourceTask cancel];
-        }
-        else if (task.error) {
-            [sourceTask setError:task.error];
-            [[TKDBCacheManager sharedManager] rollbackToCheckpoint];
-        }
-        else {
-            [sourceTask setResult:task.result];
-        }
-        return nil;
-    }];
-    
-    return sourceTask.task;
-}
-
-// step 3
-- (void)updateManagedObjectsWithServerIDs:(NSArray *)insertedObjectsWithServerIDs {
-    [TKServerObjectHelper updateServerIDInLocalDatabase:insertedObjectsWithServerIDs];
-}
-
-// step 4
-- (BFTask *)uploadInsertedObjectsAsUpdates:(NSArray *)insertedObjects withManager:(TKParseServerSyncManager *)manager {
-    BFTaskCompletionSource *uploadTask = [BFTaskCompletionSource taskCompletionSource];
-    
-    [[manager uploadUpdatedObjectsAsync:insertedObjects] continueWithBlock:^id(BFTask *task) {
-        if (task.isCancelled) {
-            [uploadTask cancel];
-        }
-        else if (task.error) {
-            [uploadTask setError:task.error];
-            [[TKDBCacheManager sharedManager] rollbackToCheckpoint];
-        }
-        else {
-            [uploadTask setResult:task.result];
-        }
-        return nil;
-    }];
-    
-    return uploadTask.task;
-}
-
-// step 5
-- (NSMutableSet *)getConflictsWithServerObjects:(NSArray *)serverObjects localObjects:(NSArray *)localObjects shadowObjects:(NSMutableArray **)arrShadowObjects withLocalUpdates:(NSMutableSet **)localUpdatesNoConflict andServerUpdates:(NSMutableSet **)serverUpdatesNoConflict {
-    
-    NSPredicate *predicate = [NSPredicate predicateWithFormat:@"creationDate <= %@", [self lastSyncDate]];
-    NSArray *updatedServerObjects = [serverObjects filteredArrayUsingPredicate:predicate];
-    
-    NSSet *updatedServerObjectsSet = [NSSet setWithArray:updatedServerObjects];
-    NSSet *updatedLocalObjectsSet = [NSSet setWithArray:localObjects];
-    
-    NSMutableSet *conflictPairs = [NSMutableSet set];
-    
-    *serverUpdatesNoConflict = [[updatedServerObjectsSet objectsPassingTest:^BOOL(id obj, BOOL *stop) {
-        return ![updatedLocalObjectsSet containsObject:obj];
-    }] mutableCopy];
-    
-    *localUpdatesNoConflict = [[updatedLocalObjectsSet objectsPassingTest:^BOOL(id obj, BOOL *stop) {
-        return ![updatedServerObjectsSet containsObject:obj];
-    }] mutableCopy];
-    
-    for (TKServerObject *serverObject in updatedServerObjectsSet) {
-        for (TKServerObject *localObject in updatedLocalObjectsSet) {
-            if ([serverObject isEqual:localObject]) {
-                TKDBCacheEntry *entry = [[TKDBCacheManager sharedManager] entryForObjectID:localObject.uniqueObjectID withType:TKDBCacheUpdate];
-                TKServerObject *shadowServerObject = entry.originalObject;
-                [conflictPairs addObject:[[TKServerObjectConflictPair alloc] initWithServerObject:serverObject localObject:localObject shadowObject:shadowServerObject]];
-            }
-        }
-    }
-
-    return conflictPairs;
-}
-
-// step 6
-- (void)_resolveConflicts:(NSArray *)conflictPairs withLocalUpdates:(NSMutableSet **)localUpdatesNoConflict andServerUpdates:(NSMutableSet **)serverUpdatesNoConflict {
-    for (TKServerObjectConflictPair *conflictPair in conflictPairs) {
-        [TKServerObjectHelper resolveConflict:conflictPair localUpdates:[*localUpdatesNoConflict allObjects] serverUpdates:[*serverUpdatesNoConflict allObjects]];
-        if (conflictPair.resolutionType == TKDBMergeLocalWins) {
-            [*serverUpdatesNoConflict addObject:conflictPair.outputObject];
-        }
-        else if (conflictPair.resolutionType == TKDBMergeServerWins) {
-            [*localUpdatesNoConflict addObject:conflictPair.outputObject];
-        }
-        else if (conflictPair.resolutionType == TKDBMergeBothUpdated) {
-            [*serverUpdatesNoConflict addObject:conflictPair.outputObject];
-            [*localUpdatesNoConflict addObject:conflictPair.outputObject];
-        }
-    }
-}
-
-// step 7
-- (void)saveServerObjectsToLocalDB:(NSArray *)serverObjects {
-    [TKServerObjectHelper updateServerObjectsInLocalDatabase:serverObjects];
-}
-
-// setp 8
-- (BFTask *)uploadLocalObjects:(NSArray *)localObjects withManager:(TKParseServerSyncManager *)manager {
-    BFTaskCompletionSource *uploadTask = [BFTaskCompletionSource taskCompletionSource];
-    
-    [[manager uploadUpdatedObjectsAsync:localObjects] continueWithBlock:^id(BFTask *task) {
-        if (task.isCancelled) {
-            [uploadTask cancel];
-        }
-        else if (task.error) {
-            [uploadTask setError:task.error];
-            [[TKDBCacheManager sharedManager] rollbackToCheckpoint];
-        }
-        else {
-            [uploadTask setResult:task.result];
-        }
-        return nil;
-    }];
-    
-    return uploadTask.task;
-    
-}
-
-// step 9
-- (void)deleteShadowObjects:(NSArray *)shadowObjects {
-    
-    NSManagedObjectContext __weak *weakSyncContext = self.syncContext;
-    for (NSManagedObject *shadowObject in shadowObjects) {
-        NSManagedObject __weak *weakShadowObject = shadowObject;
-        [self.syncContext performBlockAndWait:^{
-            [weakSyncContext deleteObject:weakShadowObject];
-        }];
-    }
-}
-
-// final step
-- (void)saveAll:(NSError **)error {
-    NSManagedObjectContext __weak *weakSyncContext = self.syncContext;
-    [self.syncContext performBlockAndWait:^{
-        [weakSyncContext save:error];
-        disableNotifications = YES;
-        [weakSyncContext.parentContext save:error];
-        disableNotifications = NO;
-    }];
-
-    [self setLastSyncDate:[NSDate date]];
-    [[TKDBCacheManager sharedManager] clearCache];
-    [[TKDBCacheManager sharedManager] endCheckpointSuccessfully];
-}
-
 
 /*
  
@@ -793,6 +598,7 @@ NSString * const TKDBSyncFailedNotification = @"TKDBSyncFailedNotification";
                     [weakself setLastSyncDate:[NSDate date]];
                     [[TKDBCacheManager sharedManager] clearCache];
                     [[TKDBCacheManager sharedManager] endCheckpointSuccessfully];
+                    [weakself.manager updateLastSyncCountAndDate];
                 }
                 
                 CFTimeInterval SYNC_END_TIME = CACurrentMediaTime();
@@ -804,70 +610,6 @@ NSString * const TKDBSyncFailedNotification = @"TKDBSyncFailedNotification";
                 [[NSNotificationCenter defaultCenter] postNotificationName:TKDBSyncDidSucceedNotification object:nil userInfo:nil];
                 
                 return [BFTask taskWithResult:@{@"Downloading server changes": step1Time, @"Resolving Conflicts" : step2Time, @"Uploading local Inserts": uploadingLocalInserts, @"Uploading local updates": uploadingLocalChanges}];
-            }];
-        }];
-    }];
-}
-
-- (BFTask *)_sync {
-    TKParseServerSyncManager *manager = [[TKParseServerSyncManager alloc] init];
-    
-    NSMutableArray __block *arrShadowObjects;
-    NSArray __block *localInsertedObjects = [TKServerObjectHelper getInsertedObjectsFromCache];
-    NSArray __block *localUpdatedObjects = [TKServerObjectHelper getUpdatedObjectsFromCache];
-    
-    [[TKDBCacheManager sharedManager] startCheckpoint];
-    
-#pragma mark Step 1: Download all objects updated on the server since last sync
-    BFTask *pullFromServerTask = [self downloadAllServerUpdatesWithManager:manager];
-    
-    return [pullFromServerTask continueWithSuccessBlock:^id(BFTask *pullTask) {
-        
-        NSMutableArray __block *arrServerObjects = pullTask.result;
-
-#pragma mark Step 2: Insert newly created objects on local from server and vice versa.
-        BFTask *insertThenUploadLocalDataTask = [self insertServerObjects:arrServerObjects thenUploadLocalData:localInsertedObjects withManager:manager];
-        
-        return [insertThenUploadLocalDataTask continueWithSuccessBlock:^id(BFTask *insertTask) {
-            NSArray *insertedObjectsWithServerIDs = insertTask.result;
-#pragma mark Step 3: Update managed objects with server IDs
-            [self updateManagedObjectsWithServerIDs:insertedObjectsWithServerIDs];
-            
-#pragma mark Step 4: Upload inserted objects as updates to wire relationships on the cloud.
-            BFTask *pushNewObjectsTask = [self uploadInsertedObjectsAsUpdates:insertedObjectsWithServerIDs withManager:manager];
-            
-            return [pushNewObjectsTask continueWithSuccessBlock:^id(BFTask *pushTask) {
-                
-#pragma mark Step 5: Separate updated objects into local no conflict, server no conflict, and conflict
-                arrShadowObjects = [NSMutableArray array];
-                NSMutableSet *localUpdatesNoConflict = [NSMutableSet set];
-                NSMutableSet *serverUpdatesNoConflict = [NSMutableSet set];
-                NSMutableSet *conflictPairs = [self getConflictsWithServerObjects:arrServerObjects localObjects:localUpdatedObjects shadowObjects:&arrShadowObjects withLocalUpdates:&localUpdatesNoConflict andServerUpdates:&serverUpdatesNoConflict];
-#pragma mark Step 6: Resolve conflicts
-                [self resolveConflicts:[conflictPairs allObjects] withLocalUpdates:&localUpdatesNoConflict andServerUpdates:&serverUpdatesNoConflict];
-                
-#pragma mark Step 7: Save objects updated on the server to local db (no conflict + conflict resolved)
-                [self saveServerObjectsToLocalDB:[serverUpdatesNoConflict allObjects]];
-                
-#pragma mark Step 8: Save objects updated locally to server (no conflict + conflict resolved)
-                BFTask *pushUpdatedObjectsTask = [self uploadLocalObjects:[localUpdatesNoConflict allObjects] withManager:manager];
-                
-                return [pushUpdatedObjectsTask continueWithSuccessBlock:^id(BFTask *task) {
-                    
-#pragma mark Step 9: Delete all shadow objects
-                    [self deleteShadowObjects:arrShadowObjects];
-
-                    NSError *savingError;
-                    [self saveAll:&savingError];
-                    
-                    if (savingError) {
-                        return [BFTask taskWithError:savingError];
-                    }
-                    else {
-                        [[NSNotificationCenter defaultCenter] postNotificationName:TKDBSyncDidSucceedNotification object:nil userInfo:nil];
-                        return [BFTask taskWithResult:nil];
-                    }
-                }];
             }];
         }];
     }];

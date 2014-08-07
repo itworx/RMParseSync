@@ -21,4 +21,5 @@
 
 @property (nonatomic, weak) id <TKParseSyncDelegate> delegate;
 
+- (void) updateLastSyncCountAndDate;
 @end

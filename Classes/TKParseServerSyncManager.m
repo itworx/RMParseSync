@@ -602,4 +602,14 @@
         return [query tk_countOfObjectsAsync];
     }];
 }
+- (void) updateLastSyncCountAndDate
+{
+    PFUser *currentUser = [PFUser currentUser];
+    [currentUser setObject:@([currentUser[@"NumOfSyncs"] integerValue] + 1) forKey:@"NumOfSyncs"];
+    [currentUser setObject:[TKDB defaultDB].lastSyncDate forKey:@"LastSyncDate"];
+    
+    [currentUser saveInBackground];
+}
+
+
 @end
