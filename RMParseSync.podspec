@@ -21,11 +21,11 @@ Pod::Spec.new do |s|
  
   s.source_files = 'Classes'
   
-  s.xcconfig = { "FRAMEWORK_SEARCH_PATHS" => '"$(PODS_ROOT)/Parse"', "HEADER_SEARCH_PATHS" => '$(PODS_ROOT)/Parse/Parse.Framework/Versions/1.2.19/Headers"' }
+  s.xcconfig = { "FRAMEWORK_SEARCH_PATHS" => '"$(PODS_ROOT)/Parse"', "HEADER_SEARCH_PATHS" => '$(PODS_ROOT)/Parse/Parse.Framework/Versions/1.3.0/Headers"' }
 
-  s.public_header_files = 'Classes/**/*.h', '"$(PODS_ROOT)/Parse/Parse.Framework/Versions/1.2.19/Headers"'
+  s.public_header_files = 'Classes/**/*.h', '"$(PODS_ROOT)/Parse/Parse.Framework/Versions/1.3.0/Headers"'
   s.frameworks = 'Foundation', 'CoreData'
   s.dependency 'Bolts', '~> 1.1.0'
-  s.dependency 'Parse', '~> 1.2.19'
+  s.dependency 'Parse', '~> 1.3.0'
   s.dependency 'CocoaLumberjack'
 end
