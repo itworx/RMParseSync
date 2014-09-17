@@ -124,7 +124,9 @@ NSString * const TKDBSyncFailedNotification = @"TKDBSyncFailedNotification";
         if ([object tk_serverObjectID] != nil) {
             continue;
         }
-        [object setValue:[NSDate date] forKey:kTKDBCreatedDateField];
+        if ([object valueForKey:kTKDBCreatedDateField] == nil) {
+            [object setValue:[NSDate date] forKey:kTKDBCreatedDateField];
+        }
         [object setValue:[NSDate date] forKey:kTKDBUpdatedDateField];
         [object assignUniqueObjectID];
     }
