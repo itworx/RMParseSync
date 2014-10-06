@@ -50,6 +50,7 @@ while(condition) { \
 
 @property (nonatomic, weak) id <TKParseSyncDelegate> syncManagerDelegate;
 
+@property (nonatomic) BOOL watchChanges;
 /**
  *  Root saving context.
  */
