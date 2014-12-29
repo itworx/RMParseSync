@@ -15,10 +15,15 @@
 #import "NSManagedObject+Sync.h"
 #import "NSManagedObjectContext+Sync.h"
 #ifdef COCOAPODS
+#import <CocoaLumberjack.h>
 #import <DDLog.h>
+#import <DDLegacy.h>
 #else
+#import "CocoaLumberjack.h"
 #import "DDLog.h"
+#import "DDLegacy.h"
 #endif
+
 
 int syncLogLevel = LOG_LEVEL_VERBOSE;
 
@@ -65,9 +70,8 @@ NSString * const TKDBSyncFailedNotification = @"TKDBSyncFailedNotification";
     return self;
 }
 
-
 - (void) contextDidSave:(NSNotification*)notification {
-
+    
     if (disableNotifications) {
         return;
     }
@@ -233,10 +237,8 @@ NSString * const TKDBSyncFailedNotification = @"TKDBSyncFailedNotification";
     
     _rootContext = rootContext;
     
-    if (_watchChanges) {
-        [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(contextDidSave:) name:NSManagedObjectContextDidSaveNotification object:_rootContext];
-        [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(contextWillSave:) name:NSManagedObjectContextWillSaveNotification object:_rootContext];
-    }
+    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(contextDidSave:) name:NSManagedObjectContextDidSaveNotification object:_rootContext];
+    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(contextWillSave:) name:NSManagedObjectContextWillSaveNotification object:_rootContext];
     
     NSManagedObjectContext *syncContext = [[NSManagedObjectContext alloc] initWithConcurrencyType:NSPrivateQueueConcurrencyType];
     syncContext.parentContext = _rootContext;
@@ -375,7 +377,7 @@ NSString * const TKDBSyncFailedNotification = @"TKDBSyncFailedNotification";
                         else if ([val isKindOfClass:[TKServerObject class]]) {
                             TKServerObject *relatedObject = val;
                             // search for relatedObject in the serverObjects
-
+                            
                             for (TKServerObject *_server in serverObjects) {
                                 if ([_server.uniqueObjectID isEqualToString:relatedObject.uniqueObjectID]) {
                                     relatedObject = _server;
